@@ -24,6 +24,12 @@
     merchant: 'Merchant',
     chest: 'Chest',
   }
+  const NODE_EMOJIS = {
+    lumberjack: '🪓',
+    carpenter: '🔨',
+    merchant: '🏪',
+    chest: '📦',
+  }
   const NODE_RADIUS = 28
   const ANIM_DURATION = 400
   const TICK_BASE = 500
@@ -443,6 +449,11 @@
         fill={NODE_COLORS[node.type]}
       />
 
+      <!-- Node emoji icon -->
+      <text class="node-emoji" x={node.x} y={node.y + 9}>
+        {NODE_EMOJIS[node.type]}
+      </text>
+
       <!-- Node label -->
       <text class="node-label" x={node.x} y={node.y + NODE_RADIUS + 14}>
         {NODE_LABELS[node.type]}
@@ -538,7 +549,7 @@
     display: flex;
     flex-direction: column;
     width: 100vw;
-    height: 100vh;
+    height: 100dvh;
     background: #0a0a0a;
     overflow: hidden;
   }
@@ -612,6 +623,13 @@
     pointer-events: none;
   }
 
+  :global(.node-emoji) {
+    font-size: 20px;
+    text-anchor: middle;
+    dominant-baseline: middle;
+    pointer-events: none;
+  }
+
   :global(.buffer-resource) {
     fill: #e8e8e8;
     font-size: 13px;
@@ -642,6 +660,7 @@
     align-items: center;
     justify-content: space-between;
     padding: 8px 12px;
+    padding-bottom: max(8px, env(safe-area-inset-bottom));
     background: #111;
     border-top: 1px solid #222;
     flex-shrink: 0;
