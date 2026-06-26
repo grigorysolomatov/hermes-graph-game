@@ -46,6 +46,16 @@
   let dragState = $state(null) // { nodeId, startX, startY, nodeStartX, nodeStartY }
   let isDragging = $state(false)
 
+  // Camera state
+  let cam = $state({ x: 0, y: 0, scale: 1 })
+  const SCALE_MIN = 0.2
+  const SCALE_MAX = 4
+
+  // Canvas pan/pinch state (non-reactive, only used in event handlers)
+  let panState = null  // { startScreenX, startScreenY, camStartX, camStartY }
+  let isPinching = false
+  let pinchState = null // { startDist, startMid, camStartX, camStartY, camStartScale }
+
   // Market prices: fixed at game start
   const marketPrices = { wood: Math.ceil(Math.random() * 3), chair: Math.ceil(Math.random() * 3) }
 
@@ -217,14 +227,39 @@
     return null
   }
 
+  function svgRect() {
+    return document.querySelector('#graph-svg').getBoundingClientRect()
+  }
+
   function svgCoords(evt) {
-    const svg = document.querySelector('#graph-svg')
-    const rect = svg.getBoundingClientRect()
+    const rect = svgRect()
     const touch = evt.touches ? evt.touches[0] : evt
-    return { x: touch.clientX - rect.left, y: touch.clientY - rect.top }
+    const sx = touch.clientX - rect.left
+    const sy = touch.clientY - rect.top
+    return { x: (sx - cam.x) / cam.scale, y: (sy - cam.y) / cam.scale }
+  }
+
+  function screenPt(clientX, clientY) {
+    const rect = svgRect()
+    return { x: clientX - rect.left, y: clientY - rect.top }
+  }
+
+  function getTouchDist(t1, t2) {
+    const dx = t1.clientX - t2.clientX
+    const dy = t1.clientY - t2.clientY
+    return Math.sqrt(dx * dx + dy * dy)
+  }
+
+  function getTouchMid(t1, t2) {
+    const rect = svgRect()
+    return {
+      x: (t1.clientX + t2.clientX) / 2 - rect.left,
+      y: (t1.clientY + t2.clientY) / 2 - rect.top,
+    }
   }
 
   function onSvgPointerDown(evt) {
+    if (isPinching) return
     evt.preventDefault()
     evt.currentTarget.setPointerCapture(evt.pointerId)
     const { x, y } = svgCoords(evt)
@@ -236,19 +271,20 @@
         isDragging = false
         dragState = { nodeId: node.id, startX: x, startY: y, nodeStartX: node.x, nodeStartY: node.y }
       } else {
-        // Maybe edge
         const edge = getEdgeAt(x, y)
         if (edge) {
           edges = edges.filter(e => e.id !== edge.id)
         } else {
           selectedId = null
+          // Start canvas pan
+          const sc = screenPt(evt.clientX, evt.clientY)
+          panState = { startScreenX: sc.x, startScreenY: sc.y, camStartX: cam.x, camStartY: cam.y }
         }
         dragState = null
         isDragging = false
       }
     } else if (mode === 'connect') {
       if (node && node.id !== connectSourceId) {
-        // Draw edge from source → tapped node
         const alreadyExists = edges.some(e => e.from === connectSourceId && e.to === node.id)
         if (!alreadyExists) {
           edges = [...edges, { id: nextId++, from: connectSourceId, to: node.id }]
@@ -256,7 +292,6 @@
         connectSourceId = null
         mode = 'select'
       } else if (!node) {
-        // Cancel connect mode when tapping empty space
         connectSourceId = null
         mode = 'select'
       }
@@ -269,6 +304,16 @@
   }
 
   function onSvgPointerMove(evt) {
+    if (isPinching) return
+
+    if (panState) {
+      evt.preventDefault()
+      const sc = screenPt(evt.clientX, evt.clientY)
+      cam.x = panState.camStartX + (sc.x - panState.startScreenX)
+      cam.y = panState.camStartY + (sc.y - panState.startScreenY)
+      return
+    }
+
     if (!dragState || mode !== 'select') return
     evt.preventDefault()
     const { x, y } = svgCoords(evt)
@@ -286,12 +331,73 @@
   }
 
   function onSvgPointerUp(evt) {
+    panState = null
     if (dragState && !isDragging && mode === 'select') {
-      // It was a tap, select was already set on down
       selectedId = dragState.nodeId
     }
     dragState = null
     isDragging = false
+  }
+
+  function onSvgPointerCancel() {
+    panState = null
+    dragState = null
+    isDragging = false
+  }
+
+  function onTouchStart(evt) {
+    if (evt.touches.length === 2) {
+      isPinching = true
+      dragState = null
+      isDragging = false
+      panState = null
+      const t1 = evt.touches[0]
+      const t2 = evt.touches[1]
+      pinchState = {
+        startDist: getTouchDist(t1, t2),
+        startMid: getTouchMid(t1, t2),
+        camStartX: cam.x,
+        camStartY: cam.y,
+        camStartScale: cam.scale,
+      }
+      evt.preventDefault()
+    }
+  }
+
+  function onTouchMove(evt) {
+    if (!isPinching || evt.touches.length < 2) return
+    evt.preventDefault()
+    const t1 = evt.touches[0]
+    const t2 = evt.touches[1]
+    const dist = getTouchDist(t1, t2)
+    const mid = getTouchMid(t1, t2)
+    const newScale = Math.max(SCALE_MIN, Math.min(SCALE_MAX,
+      pinchState.camStartScale * (dist / pinchState.startDist)))
+    // Keep the initial midpoint's world position fixed under the current midpoint
+    const worldMidX = (pinchState.startMid.x - pinchState.camStartX) / pinchState.camStartScale
+    const worldMidY = (pinchState.startMid.y - pinchState.camStartY) / pinchState.camStartScale
+    cam.x = mid.x - worldMidX * newScale
+    cam.y = mid.y - worldMidY * newScale
+    cam.scale = newScale
+  }
+
+  function onTouchEnd(evt) {
+    if (evt.touches.length < 2) {
+      isPinching = false
+      pinchState = null
+    }
+  }
+
+  function onWheel(evt) {
+    evt.preventDefault()
+    const sc = screenPt(evt.clientX, evt.clientY)
+    const factor = evt.deltaY > 0 ? 0.9 : 1.1
+    const newScale = Math.max(SCALE_MIN, Math.min(SCALE_MAX, cam.scale * factor))
+    const worldX = (sc.x - cam.x) / cam.scale
+    const worldY = (sc.y - cam.y) / cam.scale
+    cam.x = sc.x - worldX * newScale
+    cam.y = sc.y - worldY * newScale
+    cam.scale = newScale
   }
 
   function onConnectBtn() {
@@ -399,8 +505,14 @@
     onpointerdown={onSvgPointerDown}
     onpointermove={onSvgPointerMove}
     onpointerup={onSvgPointerUp}
+    onpointercancel={onSvgPointerCancel}
     oncontextmenu={e => e.preventDefault()}
+    ontouchstart={onTouchStart}
+    ontouchmove={onTouchMove}
+    ontouchend={onTouchEnd}
+    onwheel={onWheel}
   >
+  <g transform="translate({cam.x},{cam.y}) scale({cam.scale})">
     <!-- Edges -->
     {#each edges as edge (edge.id)}
       {@const from = nodes.find(n => n.id === edge.from)}
@@ -501,6 +613,7 @@
         <circle cx={src.x} cy={src.y} r={NODE_RADIUS + 8} fill="none" stroke="#7c3aed" stroke-width="2" stroke-dasharray="6 4" />
       {/if}
     {/if}
+  </g>
   </svg>
 
   <!-- Toolbar -->
