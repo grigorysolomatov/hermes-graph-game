@@ -6,7 +6,7 @@
   // Node: { id, type, x, y, buffer: Map<resource, count> }
   // Edge: { id, from, to }
   // Anim: { id, resource, x1, y1, x2, y2, startTime }
-  // mode: 'select' | 'place:<type>' | 'connect'
+  // mode: 'select' | 'connect'
 
   const NODE_TYPES = ['lumberjack', 'carpenter', 'merchant', 'chest']
   const RESOURCES = ['wood', 'chair', 'coin']
@@ -39,12 +39,13 @@
   let nodes = $state([]) // array of node objects
   let edges = $state([]) // array of edge objects
   let animations = $state([]) // flying resources
-  let mode = $state('select') // 'select' | 'place:lumberjack' | etc | 'connect'
+  let mode = $state('select') // 'select' | 'connect'
   let selectedId = $state(null)
   let connectSourceId = $state(null)
   let speed = $state(1) // 0=paused, 1=normal, 3=fast
   let dragState = $state(null) // { nodeId, startX, startY, nodeStartX, nodeStartY }
   let isDragging = $state(false)
+  let toolDrag = $state(null) // { type, clientX, clientY }
 
   // Camera state
   let cam = $state({ x: 0, y: 0, scale: 1 })
@@ -295,11 +296,6 @@
         connectSourceId = null
         mode = 'select'
       }
-    } else if (mode.startsWith('place:')) {
-      const type = mode.split(':')[1]
-      if (!node) {
-        nodes = [...nodes, mkNode(type, x, y)]
-      }
     }
   }
 
@@ -413,13 +409,42 @@
     mode = 'select'
   }
 
-  function onToolbarNode(type) {
-    if (mode === `place:${type}`) {
-      mode = 'select'
-    } else {
-      mode = `place:${type}`
-      selectedId = null
-    }
+  function startToolDrag(type, evt) {
+    evt.preventDefault()
+    evt.stopPropagation()
+    evt.currentTarget.setPointerCapture(evt.pointerId)
+    toolDrag = { type, clientX: evt.clientX, clientY: evt.clientY }
+  }
+
+  function moveToolDrag(evt) {
+    if (!toolDrag) return
+    toolDrag = { ...toolDrag, clientX: evt.clientX, clientY: evt.clientY }
+  }
+
+  function endToolDrag(evt) {
+    if (!toolDrag) return
+    const { type } = toolDrag
+    const clientX = evt.clientX
+    const clientY = evt.clientY
+    toolDrag = null
+
+    // Cancel if released over toolbar
+    const toolbar = document.querySelector('.toolbar')
+    const toolbarTop = toolbar.getBoundingClientRect().top
+    if (clientY >= toolbarTop) return
+
+    // Cancel if outside the SVG canvas
+    const svgEl = document.querySelector('#graph-svg')
+    const svgR = svgEl.getBoundingClientRect()
+    if (clientX < svgR.left || clientX > svgR.right || clientY < svgR.top || clientY > svgR.bottom) return
+
+    const wx = (clientX - svgR.left - cam.x) / cam.scale
+    const wy = (clientY - svgR.top - cam.y) / cam.scale
+    nodes = [...nodes, mkNode(type, wx, wy)]
+  }
+
+  function cancelToolDrag() {
+    toolDrag = null
   }
 
   // ── Derived: animated positions ────────────────────────────────────────────
@@ -494,7 +519,7 @@
       </span>
     {/each}
     <span class="market-mode">
-      {#if mode === 'connect'}🔗 Connect{:else if mode.startsWith('place:')}📍 Place {NODE_LABELS[mode.split(':')[1]]}{:else}✏️ Select{/if}
+      {#if mode === 'connect'}🔗 Connect{:else}✏️ Select{/if}
     </span>
   </div>
 
@@ -616,18 +641,29 @@
   </g>
   </svg>
 
+  <!-- Ghost node while dragging from toolbar -->
+  {#if toolDrag}
+    <div
+      class="ghost-node"
+      style="left: {toolDrag.clientX}px; top: {toolDrag.clientY}px; --color: {NODE_COLORS[toolDrag.type]}"
+    >
+      <span class="ghost-emoji">{NODE_EMOJIS[toolDrag.type]}</span>
+    </div>
+  {/if}
+
   <!-- Toolbar -->
   <div class="toolbar">
     <div class="toolbar-left">
       {#each NODE_TYPES as type}
         <button
-          class="tool-btn {mode === `place:${type}` ? 'active' : ''}"
+          class="tool-btn"
           style="--accent: {NODE_COLORS[type]}"
-          onpointerdown={() => onToolbarNode(type)}
+          onpointerdown={e => startToolDrag(type, e)}
+          onpointermove={moveToolDrag}
+          onpointerup={endToolDrag}
+          onpointercancel={cancelToolDrag}
         >
-          <span class="tool-icon">
-            {type === 'lumberjack' ? '🪓' : type === 'carpenter' ? '🔨' : type === 'merchant' ? '💰' : '📦'}
-          </span>
+          <span class="tool-icon">{NODE_EMOJIS[type]}</span>
           <span class="tool-label">{NODE_LABELS[type].slice(0, 4)}</span>
         </button>
       {/each}
@@ -809,11 +845,6 @@
     padding: 4px 6px;
   }
 
-  .tool-btn.active {
-    border-color: var(--accent, #7c3aed);
-    background: #222;
-  }
-
   .tool-icon {
     font-size: 20px;
     line-height: 1;
@@ -843,5 +874,25 @@
   .time-btn.active {
     border-color: #7c3aed;
     background: #1e1330;
+  }
+
+  .ghost-node {
+    position: fixed;
+    width: 50px;
+    height: 50px;
+    border-radius: 50%;
+    background: var(--color);
+    opacity: 0.6;
+    pointer-events: none;
+    transform: translate(-50%, -50%);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+  }
+
+  .ghost-emoji {
+    font-size: 24px;
+    line-height: 1;
   }
 </style>
