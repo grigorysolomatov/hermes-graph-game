@@ -1,76 +1,65 @@
-import { NODE_REGISTRY, ANIM_DURATION } from './nodes.js'
-import { runTick } from './tick.js'
+import { runTick } from './engine/tick.js'
+import { NODE_TYPES } from './nodes/registry.js'
 
-class GameState {
-  nextId = $state(1)
-  nodes = $state([])
-  edges = $state([])
-  animations = $state([])
-  mode = $state('select')
-  selectedId = $state(null)
-  customizeId = $state(null)
-  selectedEdgeId = $state(null)
-  edgeTapPos = $state(null)
-  edgePickerId = $state(null)
-  connectSourceId = $state(null)
-  speed = $state(1)
-  inFlight = $state({})
-  dragState = $state(null)
-  isDragging = $state(false)
-  toolDrag = $state(null)
-  cam = $state({ x: 0, y: 0, scale: 1 })
-  animFrame = $state(0)
+let _id = 1
+function nextId() { return String(_id++) }
 
-  marketPrices = { food: Math.ceil(Math.random() * 3), wood: Math.ceil(Math.random() * 3), chair: Math.ceil(Math.random() * 3) }
+export const state = $state({
+  nodes: [],
+  edges: [],
+  tick: 0,
+  running: true,
+  animations: [],
+})
 
-  mkNode(type, x, y) {
-    return {
-      id: this.nextId++,
-      type,
-      x,
-      y,
-      buffer: {},
-      settings: { ...NODE_REGISTRY[type].defaultSettings },
-    }
-  }
+export const ui = $state({ nodeTypeIdx: 0 })
 
-  launchAnim(fromX, fromY, resource, toId, toX, toY) {
-    const anim = {
-      id: this.nextId++,
-      resource,
-      x1: fromX, y1: fromY,
-      x2: toX, y2: toY,
-      startTime: performance.now(),
-    }
-    this.animations = [...this.animations, anim]
-    this.inFlight = { ...this.inFlight, [toId]: (this.inFlight[toId] || 0) + 1 }
-    setTimeout(() => {
-      this.animations = this.animations.filter(a => a.id !== anim.id)
-      this.inFlight = { ...this.inFlight, [toId]: Math.max(0, (this.inFlight[toId] || 0) - 1) }
-      const idx = this.nodes.findIndex(n => n.id === toId)
-      if (idx !== -1) {
-        const dest = this.nodes[idx]
-        const def = NODE_REGISTRY[dest.type]
-        if (!def) return
-        const total = Object.values(dest.buffer).reduce((s, v) => s + v, 0)
-        if (total >= def.bufferCap) return
-        const updated = [...this.nodes]
-        updated[idx] = {
-          ...dest,
-          buffer: { ...dest.buffer, [resource]: (dest.buffer[resource] || 0) + 1 },
-        }
-        this.nodes = updated
-      }
-    }, ANIM_DURATION)
-  }
-
-  tick() {
-    const { newNodes, anims } = runTick(this.nodes, this.edges, this.marketPrices, this.inFlight)
-    this.nodes = newNodes
-    for (const a of anims) {
-      this.launchAnim(a.fromX, a.fromY, a.resource, a.toId, a.toX, a.toY)
-    }
-  }
+export function cycleNodeType() {
+  ui.nodeTypeIdx = (ui.nodeTypeIdx + 1) % NODE_TYPES.length
 }
 
-export const gs = new GameState()
+let _interval = null
+
+function tick() {
+  if (!state.running) return
+  state.animations = runTick(state)
+  state.tick++
+}
+
+export function startLoop() {
+  if (_interval) return
+  _interval = setInterval(tick, 1000)
+}
+
+export function stopLoop() {
+  clearInterval(_interval)
+  _interval = null
+}
+
+export function toggleRunning() {
+  state.running = !state.running
+}
+
+export function addNode(type, x, y) {
+  state.nodes.push({ id: nextId(), type, x, y, inventory: {} })
+}
+
+export function removeNode(id) {
+  state.nodes = state.nodes.filter(n => n.id !== id)
+  state.edges = state.edges.filter(e => e.from !== id && e.to !== id)
+}
+
+export function addEdge(from, to) {
+  if (from === to) return
+  if (state.edges.some(e => e.from === from && e.to === to)) return
+  state.edges.push({ id: nextId(), from, to, resource: null })
+}
+
+export function removeEdge(id) {
+  state.edges = state.edges.filter(e => e.id !== id)
+}
+
+export function setEdgeResource(id, resource) {
+  const edge = state.edges.find(e => e.id === id)
+  if (edge) edge.resource = resource
+}
