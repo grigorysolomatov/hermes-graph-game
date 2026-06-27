@@ -10,6 +10,7 @@ export const state = $state({
   tick: 0,
   running: true,
   animations: [],
+  animFrame: 0,
   selectedId: null,
   selectedEdgeId: null,
   mode: 'select',        // 'select' | 'connect'
@@ -19,6 +20,22 @@ export const state = $state({
   toolDrag: null,        // null | { type, clientX, clientY }
 })
 
+export const ANIM_DURATION = 500
+
+export function launchAnim(fromX, fromY, resource, toX, toY) {
+  const anim = {
+    id: nextId(),
+    resource,
+    x1: fromX, y1: fromY,
+    x2: toX, y2: toY,
+    startTime: performance.now(),
+  }
+  state.animations = [...state.animations, anim]
+  setTimeout(() => {
+    state.animations = state.animations.filter(a => a.id !== anim.id)
+  }, ANIM_DURATION + 50)
+}
+
 export const ui = $state({ nodeTypeIdx: 0 })
 
 export function cycleNodeType() {
@@ -27,6 +44,12 @@ export function cycleNodeType() {
 
 let _interval = null
 let _frame = 0
+let _raf = null
+
+function rafLoop() {
+  state.animFrame = performance.now()
+  _raf = requestAnimationFrame(rafLoop)
+}
 
 function tick() {
   if (state.speed === 0) return
@@ -34,18 +57,24 @@ function tick() {
   // speed=1: fire every 3rd frame at 333ms base ≈ 1/sec
   // speed=3: fire every frame ≈ 3/sec
   if (state.speed === 1 && _frame % 3 !== 0) return
-  state.animations = runTick(state)
+  const anims = runTick(state)
+  for (const a of anims) {
+    launchAnim(a.fromX, a.fromY, a.resource, a.toX, a.toY)
+  }
   state.tick++
 }
 
 export function startLoop() {
   if (_interval) return
   _interval = setInterval(tick, 333)
+  rafLoop()
 }
 
 export function stopLoop() {
   clearInterval(_interval)
   _interval = null
+  if (_raf) cancelAnimationFrame(_raf)
+  _raf = null
 }
 
 export function toggleRunning() {

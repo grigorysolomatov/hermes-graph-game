@@ -1,6 +1,6 @@
 <script>
   import { onMount } from 'svelte'
-  import { state as gs, addEdge, removeNode, removeEdge, setEdgeResource } from '../state.svelte.js'
+  import { state as gs, addEdge, removeNode, removeEdge, setEdgeResource, ANIM_DURATION } from '../state.svelte.js'
   import { NODE_REGISTRY } from '../nodes/registry.js'
   import { RESOURCE_REGISTRY } from '../resources/registry.js'
   import { applyPan, applyZoom, screenToWorld } from '../camera.js'
@@ -13,8 +13,6 @@
   let isPanning = false
   let panLast = { x: 0, y: 0 }
   let edgePickerMenu = $state(null)      // { edge, x, y } in client coords
-  let liveAnims = $state([])
-  let _animId = 0
   let dragState = null                   // { nodeId, startWX, startWY, nodeStartX, nodeStartY }
   let isDragging = false
 
@@ -177,51 +175,19 @@
     gs.selectedEdgeId = null
   }
 
-  $effect(() => {
-    const anims = gs.animations
-    if (!anims.length) return
-    for (const anim of anims) {
-      liveAnims.push({
-        id: _animId++,
-        x: anim.fromX,
-        y: anim.fromY,
-        resource: anim.resource,
-        progress: 0,
-        fromX: anim.fromX,
-        fromY: anim.fromY,
-        toX: anim.toX,
-        toY: anim.toY,
-      })
-    }
-  })
-
   onMount(() => {
     svgEl.addEventListener('wheel', onWheel, { passive: false })
-
-    let lastTime = null
-    let rafHandle = null
-    function frame(ts) {
-      rafHandle = requestAnimationFrame(frame)
-      if (lastTime === null) { lastTime = ts; return }
-      const dt = ts - lastTime
-      lastTime = ts
-      for (let i = liveAnims.length - 1; i >= 0; i--) {
-        const a = liveAnims[i]
-        a.progress = Math.min(1, a.progress + dt / 800)
-        const p = a.progress
-        const eased = p * p * (3 - 2 * p)
-        a.x = a.fromX + (a.toX - a.fromX) * eased
-        a.y = a.fromY + (a.toY - a.fromY) * eased
-        if (a.progress >= 1) liveAnims.splice(i, 1)
-      }
-    }
-    rafHandle = requestAnimationFrame(frame)
-
-    return () => {
-      svgEl.removeEventListener('wheel', onWheel)
-      cancelAnimationFrame(rafHandle)
-    }
+    return () => svgEl.removeEventListener('wheel', onWheel)
   })
+
+  function animPos(anim) {
+    const t = Math.min(1, (gs.animFrame - anim.startTime) / ANIM_DURATION)
+    const ease = t * t * (3 - 2 * t)
+    return {
+      x: anim.x1 + (anim.x2 - anim.x1) * ease,
+      y: anim.y1 + (anim.y2 - anim.y1) * ease,
+    }
+  }
 
   function invEntries(inv) {
     return Object.entries(inv).filter(([, v]) => v > 0)
@@ -299,20 +265,25 @@
         {@const res = RESOURCE_REGISTRY[rid]}
         <text
           x={node.x + (k - (inv.length - 1) / 2) * 26}
-          y={node.y + NODE_R + 30}
+          y={node.y + NODE_R + 44}
           class="inv-icon"
           text-anchor="middle"
         >{res?.icon}×{count}</text>
       {/each}
     {/each}
 
-    <!-- Transport animations (JS-driven tweens) -->
-    {#each liveAnims as anim (anim.id)}
+    <!-- Transport animations -->
+    {#each gs.animations as anim (anim.id)}
+      {@const pos = animPos(anim)}
       {@const res = RESOURCE_REGISTRY[anim.resource]}
-      <g pointer-events="none">
-        <circle r="13" fill="rgba(10,10,10,0.85)" cx={anim.x} cy={anim.y} />
-        <text x={anim.x} y={anim.y} text-anchor="middle" dominant-baseline="middle" font-size="14">{res?.icon}</text>
-      </g>
+      <text
+        x={pos.x} y={pos.y}
+        text-anchor="middle"
+        dominant-baseline="middle"
+        font-size="16"
+        pointer-events="none"
+        style="user-select:none"
+      >{res?.icon}</text>
     {/each}
 
     <!-- Node context menu (SVG buttons rendered above everything) -->
