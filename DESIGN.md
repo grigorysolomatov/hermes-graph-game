@@ -1,14 +1,14 @@
 # Graph Game — Design Document
 
-*Prototype v1. Mobile-first sandbox.*
+*Prototype v1. Mobile-first sandbox. Last updated: June 2026.*
 
 ---
 
 ## Concept
 
 A directed-graph resource-flow sandbox inspired by Mini Metro.
-The player places nodes on a canvas and draws edges between them.
-Resources are produced, converted, and consumed automatically each tick.
+The player places nodes on a canvas and draws directed edges between them.
+Resources are produced and converted inside nodes; edges control all transport between nodes.
 No goals, no failure state — just a playground to experiment with flows.
 
 ---
@@ -16,207 +16,193 @@ No goals, no failure state — just a playground to experiment with flows.
 ## Tick
 
 - Base tick: **500ms**
-- Can be paused, played, or fast-forwarded at **3× speed**
-- All node logic fires once per tick
+- Can be **paused**, **played**, or **fast-forwarded at 3× speed**
+- All node logic and edge transport fires once per tick
+- The graph is **fully editable at any time** — paused or running
 
 ---
 
 ## Resources
 
-| Resource | Icon | Color     |
-|----------|------|-----------|
-| Food     | 🥕   | #f97316   |
-| Wood     | 🪵   | #92400e   |
-| Chair    | 🪑   | #d97706   |
-| Coin     | 🪙   | #fbbf24   |
+- Food  🥕  #f97316
+- Wood  🪵  #92400e
+- Chair 🪑  #d97706
+- Coin  🪙  #fbbf24
 
 ---
 
 ## Node Types
 
-### Farmer
-- **Produces:** 1 food per tick (adds directly to its buffer)
-- No recipe, no settings
+### Farmer 👨‍🌾 (#65a30d)
+- Produces 1 food per tick, no input needed
+- No recipe, no settings, no customization
 
-### Lumberjack
-- **Recipe:** 1 food → 1 wood
-- Each tick: if buffer has ≥ 1 food, spend 1 food, produce 1 wood (into own buffer)
-- Otherwise: idle (food must be routed in via an edge from a Farmer)
+### Lumberjack 🪓 (#84cc16)
+- Recipe: 1 food → 1 wood
+- Each tick: if buffer has ≥ 1 food, consumes 1 food and produces 1 wood into its own buffer
+- If no food in buffer: idle that tick
+- Requires food to be routed in via an edge
 
-### Carpenter
-- **Recipe:** 1 wood + 1 food → 1 chair
-- Buffers incoming wood and food each tick
-- Each tick: if buffer has ≥ 1 wood AND ≥ 1 food, spend both, produce 1 chair (into own buffer)
-- Otherwise: idle
+### Carpenter 🔨 (#a78bfa)
+- Recipe: 1 wood + 1 food → 1 chair
+- Each tick: if buffer has ≥ 1 wood AND ≥ 1 food, consumes both and produces 1 chair
+- If either ingredient is missing: idle that tick
 
-### Merchant
-- **Sells** a specific resource for coins each tick
-- `settings.sellItem` is set by the player (specific resource key) or `null` (inactive)
-- If `sellItem === null`: merchant does nothing that tick
-- If `sellItem` is set and buffer has ≥ 1 of that resource: convert 1 unit → coins at market price, add coins to own buffer
-- Coins are never sold — they must be routed out via edges
-- Market prices: assigned randomly (1–3 coins) at game start, fixed for the session
-- **Merchant icon:** the assigned `sellItem` emoji is displayed below the node circle
+### Merchant 🏪 (#f59e0b)
+- Sells one specific resource per tick, converting it to coins at the market price
+- `settings.sellItem` must be explicitly set by the player (a resource key like `'wood'`)
+- If `sellItem === null` (default): merchant does nothing that tick
+- If `sellItem` is set and buffer has ≥ 1 of that resource: removes 1 unit, adds coins (at market price) to its own buffer
+- Coins are never sold — they must be routed out via edges to other nodes
+- Market prices: randomly assigned 1–3 coins per resource at game start, fixed for the session
+- The assigned `sellItem` emoji is shown to the **right** of the merchant node circle
 
-### Chest
-- **Terminal sink** — accepts any resource including coins
-- Never sends anything out
-- Accumulates indefinitely
+### Chest 📦 (#6b7280)
+- Accepts any resource including coins via incoming edges
+- Never produces or converts anything
+- Has a large buffer cap (100) — intended as a long-term accumulator
+- Has no outgoing transport (edges from a chest can be drawn but will never fire unless the chest has resources in its buffer)
 
 ---
 
-## Resource Routing — Edge-Based Transport
+## Buffer Caps
 
-**Nodes no longer broadcast randomly.** All transport is controlled by edges.
+Every node has a maximum total buffer size (`bufferCap`). When full, incoming resources are silently dropped.
 
-### Edge data shape
+- Farmer, Lumberjack, Carpenter, Merchant: **10**
+- Chest: **100**
+
+The cap counts total items across all resource types combined.
+
+**In-flight tracking:** At fast speed (3× = tick every ~167ms), multiple animated resources can be in transit simultaneously. The cap check accounts for in-flight resources already en route to a node, preventing overshoot.
+
+---
+
+## Edge-Based Routing
+
+**All resource transport is controlled by edges.** Nodes never broadcast randomly.
+
+### Edge data
 ```
-{ id, from, to, resource: null | 'wood' | 'chair' | 'coin' }
+{ id, from, to, resource: null | 'food' | 'wood' | 'chair' | 'coin' }
 ```
 
 ### Transport logic (per tick, after node production/conversion)
 For every edge where `edge.resource !== null`:
-- If the parent node's buffer contains ≥ 1 of `edge.resource`:
+- If the **parent node's** buffer contains ≥ 1 of `edge.resource`:
   - Remove 1 from parent buffer
   - Animate the resource emoji travelling along the edge (~400ms)
-  - Add 1 to child buffer when animation completes
+  - Deliver 1 to child buffer when animation completes (cap-checked at delivery)
 - If parent buffer is empty for that resource: edge does nothing this tick
 
-If `edge.resource === null` (default for newly created edges), the edge is **inactive** and transports nothing.
+If `edge.resource === null` (default for new edges): the edge is **inactive** — transport nothing.
 
-### Tick sequence
-1. **Produce/Convert:** each node adds production or recipe outputs to its own buffer
-2. **Merchant sell:** merchants with `sellItem` set convert one unit to coins in their buffer
-3. **Edge transport:** each active edge moves one resource unit from parent → child buffer
+### Tick sequence (each tick)
+1. **Produce:** nodes with `produces` add output to their own buffer
+2. **Convert:** nodes with recipes consume inputs and add outputs to their own buffer
+3. **Merchant sell:** merchants with `sellItem` set convert one unit to coins
+4. **Edge transport:** each active edge moves one resource unit from parent → child
 
 ---
 
-## Edge Icon
+## Edge Icons
 
 Each edge displays a small emoji at its midpoint:
-- `edge.resource === null`: no icon shown
-- Otherwise: shows the resource emoji (🪵 / 🪑 / 🪙) centred on the edge line
-- Rendered as an SVG `<text>` element, ~14px
+- `edge.resource === null`: no icon shown (edge is inactive)
+- Otherwise: shows the resource emoji centred on the edge line (~14px SVG text)
 
 ---
 
-## Buffers (Visual)
+## Parallel Edge Offset
 
-- Each node displays its buffered resources **below** the node circle
-- Grouped by type: shown as `[icon] [count]` e.g. 🪵 3
-- On Merchant nodes with a `sellItem` set, the sell item icon is shown between the label and buffer display
-
-## Buffer Caps
-
-Every node type has a `bufferCap` — the maximum total number of items (sum of all resource counts) it can hold:
-
-| Node type  | bufferCap |
-|------------|-----------|
-| Farmer     | 10        |
-| Lumberjack | 10        |
-| Carpenter  | 10        |
-| Merchant   | 10        |
-| Chest      | 100       |
-
-**Rule:** before any resource is added to a node's buffer (via production, recipe output, merchant sale, or edge transport), check: `sum(buffer values) < bufferCap`. If at or above cap, the incoming resource is silently dropped. For edge transport, the resource is removed from the sender but not delivered to the full receiver.
+When two edges connect the **same pair of nodes in opposite directions** (A→B and B→A), they are rendered as two parallel lines:
+- Each edge is offset **10px to its own left** (counter-clockwise relative to direction of travel)
+- Total separation between the two lines: 20px
+- A lone edge (only one direction between a pair) renders centred with no offset
+- The offset applies to: the visible stroke, arrowhead, resource icon, hit area, and context-menu spawn point
+- If one of a pair is deleted, the remaining edge snaps back to centre
 
 ---
 
 ## Market / Price Table
 
 - Always visible at the **top of the screen**
-- Shows: e.g. `🪵 = 2🪙   🪑 = 3🪙`
-- Prices randomised at game start (1–3 each), fixed for session
+- Shows current sell prices, e.g. `🪵 = 2🪙   🪑 = 3🪙`
+- Prices fixed for the session
 
 ---
 
 ## Time Controls
 
 Floating collapsible panel on the **right side** of the screen:
-- Position: fixed, right edge, vertically centred
-- Contains: ⏸ Pause / ▶ Play / ⏩ Fast (3×) as a vertical stack of buttons
+- Fixed position, right edge, vertically centred
+- Vertical stack of buttons: ⏸ Pause / ▶ Play / ⏩ Fast (3×)
 - A ◀/▶ chevron tab on the panel's left edge toggles collapse
 - When collapsed: only the tab is visible; panel slides off-screen to the right
 - Style: `rgba(10,10,10,0.88)` background, `backdrop-filter: blur(8px)`, #222 border
-- Touch targets ≥ 52px
-
-Graph is **fully editable at any time** — paused or running.
 
 ---
 
-## Interaction (Mobile-First, Touch-Based)
+## Interaction (Mobile-First)
 
 No keyboard shortcuts. No right-click. No hover-only affordances.
 All touch targets ≥ 48px.
 
-### Toolbar (bottom of screen)
-- **Horizontally scrollable node strip** — Farmer | Lumberjack | Carpenter | Merchant | Chest (and any future node types)
-- Scroll by swiping left/right; no visible scrollbar
-- Time controls are in the separate right-side collapsible panel (see Time Controls above)
+### Bottom toolbar
+- Horizontally scrollable strip of node type buttons: Farmer | Lumberjack | Carpenter | Merchant | Chest
+- Swipe left/right to scroll; no visible scrollbar
+- **Drag to place:** drag a node button from the toolbar onto the canvas to place it
 
-### Modes
-
-**Select mode** (default):
-- Tap a node → select it (shows white ring + action buttons: 🔗 Connect / ⚙️ Customize / 🗑️ Delete)
-- Drag a node → move it; edges follow automatically
-- Tap an edge → open edge context menu (see below)
+### Select mode (default)
+- Tap a node → select it → node context menu appears
+- Drag a node → move it; connected edges follow
+- Tap an edge → edge context menu appears
 - Tap empty space → deselect / close menus
 
-**Connect mode** — activated by tapping 🔗 on a selected node:
-- Tap any other node → draw directed edge from selected → tapped (new edge has `resource: null`)
-- Auto-returns to select mode
+### Connect mode
+- Activated by tapping 🔗 in the node context menu
+- Tap any other node → draw directed edge from selected → tapped node (new edge has `resource: null`)
+- Auto-returns to select mode after connecting
 
-### Node Context Menu (SVG inline buttons near node)
-Appears above the selected node. Two or three buttons (48px tap targets):
-1. **🔗** — enter Connect mode to draw a new edge
-2. **⚙️** — open Merchant customize panel (**only shown** when the node type has configurable settings, i.e. `Object.keys(defaultSettings).length > 0`; hidden entirely for Farmer, Lumberjack, Carpenter, Chest)
-3. **🗑️** — delete the node and all its edges
+### Node context menu (SVG inline buttons above node)
+- 🔗 — enter Connect mode
+- ⚙️ Customize — opens per-node settings panel (**only shown** when the node type has configurable settings; hidden entirely for Farmer, Lumberjack, Carpenter, Chest)
+- 🗑️ Delete — removes the node and all its edges
 
-When only 2 buttons are shown (no Customize), they are centred ±26px from the node centre.
+### Edge context menu (SVG inline buttons near tap point)
+- 🎯 Set Resource — opens resource picker overlay
+- 🗑️ Delete Edge — removes the edge
+- Tapped edge highlights in violet while menu is open
 
-### Edge Context Menu (SVG inline buttons near tap point)
-Appears when tapping an edge in select mode. Two buttons (48px tap targets):
-1. **🎯 Set Resource** — opens resource picker overlay
-2. **🗑️ Delete Edge** — removes the edge
-
-The tapped edge highlights in violet while the menu is open.
-
-### Edge Resource Picker (HTML overlay)
-- Dark modal overlay (same style as Merchant settings)
+### Edge resource picker (HTML overlay)
 - Options: None (inactive) / 🥕 Food / 🪵 Wood / 🪑 Chair / 🪙 Coin
-- Selecting an option sets `edge.resource` and closes the picker
 
-### Merchant Customize Panel (HTML overlay)
-- Options: None (inactive) / 🪵 Wood / 🪑 Chair
-- Coins are excluded — merchants only sell non-coin resources
+### Merchant customize panel (HTML overlay)
+- Options: None (inactive) / 🥕 Food / 🪵 Wood / 🪑 Chair
+- Coins excluded (merchants only sell non-coin resources)
 
 ---
 
 ## Visual Style
 
-- **Background:** #0a0a0a (full screen)
-- **Graph layer:** SVG, full screen
-- **Node circles:** radius 28px, filled by type:
-  - Farmer: #65a30d (green)
-  - Lumberjack: #84cc16 (lime)
-  - Carpenter: #a78bfa (purple)
-  - Merchant: #f59e0b (amber)
-  - Chest: #6b7280 (gray)
-- **Selected node:** additional white stroke ring (3px)
-- **Edges:** #555 thin lines with small filled arrowhead at the target end; selected edge highlighted in #7c3aed
-- **Edge resource icon:** emoji at edge midpoint, 14px SVG text
-- **Animating resources:** small emoji travelling along edge path (~400ms)
-- **Node label:** type name, below circle, monospace, small
-- **Merchant sell icon:** resource emoji below node label, 13px
-- **Font:** system monospace throughout
+- Background: #0a0a0a (full screen)
+- Graph: SVG layer, full screen
+- Node circles: radius 28px, colour per node type (see Node Types above)
+- Selected node: white stroke ring (3px)
+- Edges: #555 lines with filled arrowhead; selected/active edge in #7c3aed
+- Edge resource icon: emoji at midpoint, 14px
+- Animating resources: emoji travelling along edge (~400ms)
+- Node label: type name below circle, system monospace, small
+- Merchant sell icon: resource emoji to the right of the node circle, 13px
+- Buffer display: grouped by resource type below node, `[icon] [count]`
+- Font: system monospace throughout
+- Overlays: `rgba(10,10,10,0.88)` + `backdrop-filter: blur(8px)`, #222 border
 
 ---
 
 ## Starting State
 
-One **Farmer** placed near the centre of the canvas.
-Its food production accumulates in its buffer until edges are drawn to a Lumberjack.
-(Lumberjack now requires food input, so starting with a Farmer ensures the player has something immediately useful.)
+One **Farmer** placed at the centre of the canvas, immediately producing food each tick.
 
 ---
 
@@ -224,25 +210,32 @@ Its food production accumulates in its buffer until edges are drawn to a Lumberj
 
 ```
 src/
-  App.svelte                  — thin orchestrator: SVG canvas + toolbar + overlays
+  App.svelte                  — thin root: market bar, toolbar, ghost node, overlays, tick/RAF effects
+  app.css                     — empty (all game styles live in component <style> blocks)
+  main.js                     — Svelte mount entry point
   lib/
-    registry.js               — NODE_REGISTRY, RESOURCES, RESOURCE_ICONS, constants
-    state.svelte.js           — reactive game state (Svelte 5 class with $state runes)
-    tick.js                   — pure tick function: production + edge transport
-    camera.js                 — pan/zoom/svgCoords helpers (pure functions)
-    NodeContextMenu.svelte    — SVG action buttons for selected node
-    EdgeContextMenu.svelte    — SVG action buttons for selected edge
+    registry.js               — NODE_REGISTRY, RESOURCES, RESOURCE_ICONS, constants (NODE_RADIUS, TICK_BASE, …)
+    state.svelte.js           — GameState class with $state runes; exported singleton `gs`
+    tick.js                   — pure runTick(): production, conversion, merchant sell, edge transport
+    camera.js                 — svgCoords, screenPt, getTouchDist/Mid, arrowHead, computeEdgeGeometry
+    interactions.js           — all pointer/touch/wheel event handlers; node/edge/tool-drag actions;
+                                computeReverseEdgeIds; EDGE_OFFSET; getNodeAt/getEdgeAt hit helpers
+    GraphCanvas.svelte        — SVG canvas: edges, arrowheads, animations, nodes, context menus,
+                                connect-mode ring; imports interaction handlers from interactions.js
+    NodeContextMenu.svelte    — SVG action buttons (🔗 Connect / ⚙️ Customize / 🗑️ Delete) for selected node
+    EdgeContextMenu.svelte    — SVG action buttons (🎯 Set Resource / 🗑️ Delete) for selected edge
     CustomizePanel.svelte     — HTML overlay: merchant sell-item picker
     EdgeResourcePicker.svelte — HTML overlay: edge resource picker
-    TimeControlPanel.svelte   — fixed right-side collapsible time controls panel
+    TimeControlPanel.svelte   — fixed right-side collapsible time controls (⏸ / ▶ / ⏩)
 ```
 
 ---
 
-## Implementation Notes
+## Tech Stack
 
-- Svelte 5 with runes (`$state`, `$derived`, `$effect`) — no legacy stores
-- SVG for the graph (nodes, edges, animations)
-- Game state in a `GameState` class exported as `gs` from `state.svelte.js`
-- Edge hit-testing uses 15px radius threshold for wide touch targets
-- **Parallel edge offset:** if two edges connect the same pair of nodes in opposite directions (A→B and B→A), both are offset 10px to the left (counter-clockwise relative to direction of travel), placing them 20px apart on opposite sides of the centre line. A lone edge (only one direction) renders centred with no offset. The offset applies to the visible stroke, arrowhead, resource icon, hit area, and context-menu spawn point.
+- Svelte 5 runes (`$state`, `$derived`, `$effect`) — no legacy stores
+- Vite build
+- SVG for the graph canvas
+- `100dvh` (not `100vh`) for mobile full-screen
+- `viewport-fit=cover` + `env(safe-area-inset-bottom)` on the toolbar
+- GitHub Pages deployment via `gh-pages` npm package
