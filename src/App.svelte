@@ -11,7 +11,7 @@
   const NODE_REGISTRY = {
     lumberjack: { label: 'Lumberjack', emoji: '🪓', color: '#84cc16', produces: { wood: 1 }, recipe: null, isMerchant: false, isSink: false, defaultSettings: {} },
     carpenter:  { label: 'Carpenter',  emoji: '🔨', color: '#a78bfa', produces: null, recipe: { inputs: { wood: 2 }, outputs: { chair: 1 } }, isMerchant: false, isSink: false, defaultSettings: {} },
-    merchant:   { label: 'Merchant',   emoji: '🏪', color: '#f59e0b', produces: null, recipe: null, isMerchant: true,  isSink: false, defaultSettings: {} },
+    merchant:   { label: 'Merchant',   emoji: '🏪', color: '#f59e0b', produces: null, recipe: null, isMerchant: true,  isSink: false, defaultSettings: { sellItem: null } },
     chest:      { label: 'Chest',      emoji: '📦', color: '#6b7280', produces: null, recipe: null, isMerchant: false, isSink: true,  defaultSettings: {} },
   }
   const NODE_TYPES = Object.keys(NODE_REGISTRY)
@@ -29,6 +29,7 @@
   let animations = $state([]) // flying resources
   let mode = $state('select') // 'select' | 'connect'
   let selectedId = $state(null)
+  let customizeId = $state(null)
   let connectSourceId = $state(null)
   let speed = $state(1) // 0=paused, 1=normal, 3=fast
   let dragState = $state(null) // { nodeId, startX, startY, nodeStartX, nodeStartY }
@@ -95,9 +96,15 @@
       }
 
       if (def.isMerchant) {
-        const sellable = Object.keys(node.buffer).filter(r => r !== 'coin' && node.buffer[r] > 0)
-        if (sellable.length > 0) {
-          const res = pickRandom(sellable)
+        const targetItem = node.settings?.sellItem ?? null
+        let res = null
+        if (targetItem) {
+          if ((node.buffer[targetItem] || 0) > 0) res = targetItem
+        } else {
+          const sellable = Object.keys(node.buffer).filter(r => r !== 'coin' && node.buffer[r] > 0)
+          if (sellable.length > 0) res = pickRandom(sellable)
+        }
+        if (res) {
           node.buffer[res] -= 1
           if (node.buffer[res] === 0) delete node.buffer[res]
           const coins = marketPrices[res] || 1
@@ -409,6 +416,18 @@
     mode = 'select'
   }
 
+  function onCustomizeBtn() {
+    customizeId = selectedId
+  }
+
+  function closeCustomize() {
+    customizeId = null
+  }
+
+  function setMerchantSellItem(nodeId, value) {
+    nodes = nodes.map(n => n.id === nodeId ? { ...n, settings: { ...n.settings, sellItem: value || null } } : n)
+  }
+
   function startToolDrag(type, evt) {
     evt.preventDefault()
     evt.stopPropagation()
@@ -507,6 +526,7 @@
   }
 
   const selectedNode = $derived(nodes.find(n => n.id === selectedId))
+  const customizeNode = $derived(nodes.find(n => n.id === customizeId))
 </script>
 
 <svelte:head>
@@ -617,17 +637,29 @@
         <!-- Connect button -->
         <g
           class="action-btn"
-          transform={`translate(${node.x - 36}, ${node.y - NODE_RADIUS - 32})`}
+          transform={`translate(${node.x - 52}, ${node.y - NODE_RADIUS - 32})`}
           onpointerdown={e => { e.stopPropagation(); onConnectBtn() }}
         >
           <rect x="-24" y="-24" width="48" height="48" rx="10" fill="#7c3aed" />
           <text class="action-label" x="0" y="7">🔗</text>
         </g>
 
+        <!-- Customize button -->
+        {@const isMerchant = NODE_REGISTRY[node.type].isMerchant}
+        <g
+          class="action-btn"
+          transform={`translate(${node.x}, ${node.y - NODE_RADIUS - 32})`}
+          opacity={isMerchant ? 1 : 0.35}
+          onpointerdown={e => { e.stopPropagation(); if (isMerchant) onCustomizeBtn() }}
+        >
+          <rect x="-24" y="-24" width="48" height="48" rx="10" fill={isMerchant ? '#374151' : '#1f2937'} />
+          <text class="action-label" x="0" y="7">⚙️</text>
+        </g>
+
         <!-- Delete button -->
         <g
           class="action-btn"
-          transform={`translate(${node.x + 36}, ${node.y - NODE_RADIUS - 32})`}
+          transform={`translate(${node.x + 52}, ${node.y - NODE_RADIUS - 32})`}
           onpointerdown={e => { e.stopPropagation(); onDeleteBtn() }}
         >
           <rect x="-24" y="-24" width="48" height="48" rx="10" fill="#dc2626" />
@@ -653,6 +685,31 @@
       style="left: {toolDrag.clientX - 25}px; top: {toolDrag.clientY - 25}px; --color: {NODE_REGISTRY[toolDrag.type].color}"
     >
       <span class="ghost-emoji">{NODE_REGISTRY[toolDrag.type].emoji}</span>
+    </div>
+  {/if}
+
+  <!-- Customize modal -->
+  {#if customizeId && customizeNode}
+    <div class="modal-backdrop" onpointerdown={closeCustomize}>
+      <div class="modal-panel" onpointerdown={e => e.stopPropagation()}>
+        <div class="modal-title">{NODE_REGISTRY[customizeNode.type].label} Settings</div>
+        {#if NODE_REGISTRY[customizeNode.type].isMerchant}
+          <label class="modal-field">
+            <span class="modal-field-label">Sell item</span>
+            <select
+              class="modal-select"
+              value={customizeNode.settings.sellItem ?? ''}
+              onchange={e => setMerchantSellItem(customizeNode.id, e.currentTarget.value)}
+            >
+              <option value="">Random (any item)</option>
+              {#each RESOURCES.filter(r => r !== 'coin') as res}
+                <option value={res}>{RESOURCE_ICONS[res]} {res.charAt(0).toUpperCase() + res.slice(1)}</option>
+              {/each}
+            </select>
+          </label>
+        {/if}
+        <button class="modal-close-btn" onpointerdown={closeCustomize}>Done</button>
+      </div>
     </div>
   {/if}
 
@@ -896,5 +953,72 @@
   .ghost-emoji {
     font-size: 24px;
     line-height: 1;
+  }
+
+  .modal-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.6);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 200;
+  }
+
+  .modal-panel {
+    background: #111;
+    border: 1px solid #333;
+    border-radius: 12px;
+    padding: 20px;
+    min-width: 260px;
+    max-width: 90vw;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+
+  .modal-title {
+    font-size: 15px;
+    font-weight: 600;
+    color: #e8e8e8;
+  }
+
+  .modal-field {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .modal-field-label {
+    font-size: 12px;
+    color: #aaa;
+  }
+
+  .modal-select {
+    background: #1a1a1a;
+    border: 1px solid #444;
+    border-radius: 8px;
+    color: #e8e8e8;
+    font-family: inherit;
+    font-size: 14px;
+    padding: 8px 10px;
+    cursor: pointer;
+    outline: none;
+    appearance: none;
+    -webkit-appearance: none;
+  }
+
+  .modal-close-btn {
+    align-self: flex-end;
+    background: #7c3aed;
+    border: none;
+    border-radius: 8px;
+    color: #e8e8e8;
+    font-family: inherit;
+    font-size: 14px;
+    font-weight: 600;
+    padding: 8px 20px;
+    cursor: pointer;
+    min-height: 40px;
   }
 </style>
