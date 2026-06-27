@@ -34,20 +34,22 @@ No goals, no failure state — just a playground to experiment with flows.
 ## Node Types
 
 ### Lumberjack
-- **Produces:** 1 wood per tick (no input needed)
-- **Sends:** wood along one randomly-chosen outgoing edge
+- **Produces:** 1 wood per tick (adds directly to its buffer)
 
 ### Carpenter
 - **Recipe:** 2 wood → 1 chair
-- **Buffers** incoming wood
-- Each tick: if buffer has ≥ 2 wood, spend 2 wood, produce 1 chair, send along random outgoing edge
+- Buffers incoming wood each tick
+- Each tick: if buffer has ≥ 2 wood, spend 2 wood, produce 1 chair (into own buffer)
 - Otherwise: idle
 
 ### Merchant
-- **Sells** non-coin resources for coins
-- Each tick: if buffer has any non-coin resources, pick one at random, convert to coins at its market price, send coins along random outgoing edge
-- **Coins are never sold** — they pass through if forwarded via edges, or accumulate if no edges
+- **Sells** a specific resource for coins each tick
+- `settings.sellItem` is set by the player (specific resource key) or `null` (inactive)
+- If `sellItem === null`: merchant does nothing that tick
+- If `sellItem` is set and buffer has ≥ 1 of that resource: convert 1 unit → coins at market price, add coins to own buffer
+- Coins are never sold — they must be routed out via edges
 - Market prices: assigned randomly (1–3 coins) at game start, fixed for the session
+- **Merchant icon:** the assigned `sellItem` emoji is displayed below the node circle
 
 ### Chest
 - **Terminal sink** — accepts any resource including coins
@@ -56,11 +58,38 @@ No goals, no failure state — just a playground to experiment with flows.
 
 ---
 
-## Resource Routing
+## Resource Routing — Edge-Based Transport
 
-- Each tick, a node with a produced/converted resource picks one random outgoing edge and sends it
-- If no outgoing edges: resource stays in the node's buffer
-- Resources **animate** as small icons travelling along the edge over ~400ms
+**Nodes no longer broadcast randomly.** All transport is controlled by edges.
+
+### Edge data shape
+```
+{ id, from, to, resource: null | 'wood' | 'chair' | 'coin' }
+```
+
+### Transport logic (per tick, after node production/conversion)
+For every edge where `edge.resource !== null`:
+- If the parent node's buffer contains ≥ 1 of `edge.resource`:
+  - Remove 1 from parent buffer
+  - Animate the resource emoji travelling along the edge (~400ms)
+  - Add 1 to child buffer when animation completes
+- If parent buffer is empty for that resource: edge does nothing this tick
+
+If `edge.resource === null` (default for newly created edges), the edge is **inactive** and transports nothing.
+
+### Tick sequence
+1. **Produce/Convert:** each node adds production or recipe outputs to its own buffer
+2. **Merchant sell:** merchants with `sellItem` set convert one unit to coins in their buffer
+3. **Edge transport:** each active edge moves one resource unit from parent → child buffer
+
+---
+
+## Edge Icon
+
+Each edge displays a small emoji at its midpoint:
+- `edge.resource === null`: no icon shown
+- Otherwise: shows the resource emoji (🪵 / 🪑 / 🪙) centred on the edge line
+- Rendered as an SVG `<text>` element, ~14px
 
 ---
 
@@ -68,7 +97,7 @@ No goals, no failure state — just a playground to experiment with flows.
 
 - Each node displays its buffered resources **below** the node circle
 - Grouped by type: shown as `[icon] [count]` e.g. 🪵 3
-- Icon size scales slightly with count, **capped at half the node radius**
+- On Merchant nodes with a `sellItem` set, the sell item icon is shown between the label and buffer display
 
 ---
 
@@ -102,19 +131,37 @@ All touch targets ≥ 48px.
 
 ### Modes
 
-**Place mode** — activated by tapping a node type button:
-- Tap empty canvas → place node of selected type
-- Tap same button again or tap canvas background → exit place mode
-
 **Select mode** (default):
-- Tap a node → select it (shows white ring + two action buttons nearby: **Connect** and **Delete**)
+- Tap a node → select it (shows white ring + action buttons: 🔗 Connect / ⚙️ Customize / 🗑️ Delete)
 - Drag a node → move it; edges follow automatically
-- Tap an edge → delete it
-- Tap empty space → deselect
+- Tap an edge → open edge context menu (see below)
+- Tap empty space → deselect / close menus
 
-**Connect mode** — activated by tapping Connect on a selected node:
-- Tap any other node → draw directed edge from selected → tapped
+**Connect mode** — activated by tapping 🔗 on a selected node:
+- Tap any other node → draw directed edge from selected → tapped (new edge has `resource: null`)
 - Auto-returns to select mode
+
+### Node Context Menu (SVG inline buttons near node)
+Appears above the selected node. Three buttons (48px tap targets):
+1. **🔗** — enter Connect mode to draw a new edge
+2. **⚙️** — open Merchant customize panel (dimmed/disabled on non-merchant nodes)
+3. **🗑️** — delete the node and all its edges
+
+### Edge Context Menu (SVG inline buttons near tap point)
+Appears when tapping an edge in select mode. Two buttons (48px tap targets):
+1. **🎯 Set Resource** — opens resource picker overlay
+2. **🗑️ Delete Edge** — removes the edge
+
+The tapped edge highlights in violet while the menu is open.
+
+### Edge Resource Picker (HTML overlay)
+- Dark modal overlay (same style as Merchant settings)
+- Options: None (inactive) / 🪵 Wood / 🪑 Chair / 🪙 Coin
+- Selecting an option sets `edge.resource` and closes the picker
+
+### Merchant Customize Panel (HTML overlay)
+- Options: None (inactive) / 🪵 Wood / 🪑 Chair
+- Coins are excluded — merchants only sell non-coin resources
 
 ---
 
@@ -128,9 +175,11 @@ All touch targets ≥ 48px.
   - Merchant: #f59e0b (amber)
   - Chest: #6b7280 (gray)
 - **Selected node:** additional white stroke ring (3px)
-- **Edges:** #555 thin lines with small filled arrowhead at the target end
-- **Animating resources:** small emoji travelling along edge path
+- **Edges:** #555 thin lines with small filled arrowhead at the target end; selected edge highlighted in #7c3aed
+- **Edge resource icon:** emoji at edge midpoint, 14px SVG text
+- **Animating resources:** small emoji travelling along edge path (~400ms)
 - **Node label:** type name, below circle, monospace, small
+- **Merchant sell icon:** resource emoji below node label, 13px
 - **Font:** system monospace throughout
 
 ---
@@ -138,7 +187,25 @@ All touch targets ≥ 48px.
 ## Starting State
 
 One **Lumberjack** placed near the centre of the canvas.
-Player immediately sees wood being produced each tick.
+Its wood production accumulates in its buffer until edges are drawn.
+
+---
+
+## File Structure
+
+```
+src/
+  App.svelte                  — thin orchestrator: SVG canvas + toolbar + overlays
+  lib/
+    registry.js               — NODE_REGISTRY, RESOURCES, RESOURCE_ICONS, constants
+    state.svelte.js           — reactive game state (Svelte 5 class with $state runes)
+    tick.js                   — pure tick function: production + edge transport
+    camera.js                 — pan/zoom/svgCoords helpers (pure functions)
+    NodeContextMenu.svelte    — SVG action buttons for selected node
+    EdgeContextMenu.svelte    — SVG action buttons for selected edge
+    CustomizePanel.svelte     — HTML overlay: merchant sell-item picker
+    EdgeResourcePicker.svelte — HTML overlay: edge resource picker
+```
 
 ---
 
@@ -146,6 +213,5 @@ Player immediately sees wood being produced each tick.
 
 - Svelte 5 with runes (`$state`, `$derived`, `$effect`) — no legacy stores
 - SVG for the graph (nodes, edges, animations)
-- All game state in one top-level reactive object: nodes map, edges array, tick interval ref, market prices
-- Single self-contained file: `src/games/graph-game/index.svelte`
-- Register in `src/lib/store.js`: `{ id: 'graph-game', title: 'Graph Game', category: 'strategy', archived: false }`
+- Game state in a `GameState` class exported as `gs` from `state.svelte.js`
+- Edge hit-testing uses 15px radius threshold for wide touch targets

@@ -1,367 +1,180 @@
 <script>
-  // Graph Game — Svelte 5 runes implementation
-  // Directed graph resource-flow sandbox
+  import { gs } from './lib/state.svelte.js'
+  import { NODE_REGISTRY, NODE_TYPES, RESOURCE_ICONS, NODE_RADIUS, ANIM_DURATION, TICK_BASE } from './lib/registry.js'
+  import { svgCoords, screenPt, getTouchDist, getTouchMid, edgeLine, arrowHead, SCALE_MIN, SCALE_MAX } from './lib/camera.js'
+  import NodeContextMenu from './lib/NodeContextMenu.svelte'
+  import EdgeContextMenu from './lib/EdgeContextMenu.svelte'
+  import CustomizePanel from './lib/CustomizePanel.svelte'
+  import EdgeResourcePicker from './lib/EdgeResourcePicker.svelte'
 
-  // ── Types ──────────────────────────────────────────────────────────────────
-  // Node: { id, type, x, y, buffer: Map<resource, count> }
-  // Edge: { id, from, to }
-  // Anim: { id, resource, x1, y1, x2, y2, startTime }
-  // mode: 'select' | 'connect'
-
-  const NODE_REGISTRY = {
-    lumberjack: { label: 'Lumberjack', emoji: '🪓', color: '#84cc16', produces: { wood: 1 }, recipe: null, isMerchant: false, isSink: false, defaultSettings: {} },
-    carpenter:  { label: 'Carpenter',  emoji: '🔨', color: '#a78bfa', produces: null, recipe: { inputs: { wood: 2 }, outputs: { chair: 1 } }, isMerchant: false, isSink: false, defaultSettings: {} },
-    merchant:   { label: 'Merchant',   emoji: '🏪', color: '#f59e0b', produces: null, recipe: null, isMerchant: true,  isSink: false, defaultSettings: { sellItem: null } },
-    chest:      { label: 'Chest',      emoji: '📦', color: '#6b7280', produces: null, recipe: null, isMerchant: false, isSink: true,  defaultSettings: {} },
-  }
-  const NODE_TYPES = Object.keys(NODE_REGISTRY)
-  const RESOURCES = ['wood', 'chair', 'coin']
-  const RESOURCE_ICONS = { wood: '🪵', chair: '🪑', coin: '🪙' }
-  const RESOURCE_COLORS = { wood: '#92400e', chair: '#d97706', coin: '#fbbf24' }
-  const NODE_RADIUS = 28
-  const ANIM_DURATION = 400
-  const TICK_BASE = 500
-
-  // ── State ──────────────────────────────────────────────────────────────────
-  let nextId = $state(1)
-  let nodes = $state([]) // array of node objects
-  let edges = $state([]) // array of edge objects
-  let animations = $state([]) // flying resources
-  let mode = $state('select') // 'select' | 'connect'
-  let selectedId = $state(null)
-  let customizeId = $state(null)
-  let connectSourceId = $state(null)
-  let speed = $state(1) // 0=paused, 1=normal, 3=fast
-  let dragState = $state(null) // { nodeId, startX, startY, nodeStartX, nodeStartY }
-  let isDragging = $state(false)
-  let toolDrag = $state(null) // { type, clientX, clientY }
-
-  // Camera state
-  let cam = $state({ x: 0, y: 0, scale: 1 })
-  const SCALE_MIN = 0.2
-  const SCALE_MAX = 4
-
-  // Canvas pan/pinch state (non-reactive, only used in event handlers)
-  let panState = null  // { startScreenX, startScreenY, camStartX, camStartY }
+  // Non-reactive interaction state
+  let panState = null
   let isPinching = false
-  let pinchState = null // { startDist, startMid, camStartX, camStartY, camStartScale }
-
-  // Market prices: fixed at game start
-  const marketPrices = { wood: Math.ceil(Math.random() * 3), chair: Math.ceil(Math.random() * 3) }
-
-  // Ensure prices are distinct-ish — just keep as-is, spec says 1–3 each
-  function mkNode(type, x, y) {
-    return { id: nextId++, type, x, y, buffer: {}, settings: { ...NODE_REGISTRY[type].defaultSettings } }
-  }
-
-  // Starting state: one lumberjack near centre
-  nodes = [mkNode('lumberjack', 50, 50)] // will be centred on mount
-
-  // ── Tick logic ─────────────────────────────────────────────────────────────
-  function getOutEdges(nodeId) {
-    return edges.filter(e => e.from === nodeId)
-  }
-
-  function pickRandom(arr) {
-    return arr[Math.floor(Math.random() * arr.length)]
-  }
-
-  function tick() {
-    // Process each node
-    const newNodes = nodes.map(n => ({ ...n, buffer: { ...n.buffer } }))
-    // We'll mutate newNodes in place, then assign
-
-    for (const node of newNodes) {
-      const def = NODE_REGISTRY[node.type]
-      if (!def) continue
-
-      if (def.produces) {
-        for (const [res, count] of Object.entries(def.produces)) {
-          sendResourceFrom(node, res, newNodes, count)
-        }
-      }
-
-      if (def.recipe) {
-        const { inputs, outputs } = def.recipe
-        const canProcess = Object.entries(inputs).every(([res, need]) => (node.buffer[res] || 0) >= need)
-        if (canProcess) {
-          for (const [res, need] of Object.entries(inputs)) {
-            node.buffer[res] -= need
-            if (node.buffer[res] === 0) delete node.buffer[res]
-          }
-          for (const [res, count] of Object.entries(outputs)) {
-            sendResourceFrom(node, res, newNodes, count)
-          }
-        }
-      }
-
-      if (def.isMerchant) {
-        const targetItem = node.settings?.sellItem ?? null
-        let res = null
-        if (targetItem) {
-          if ((node.buffer[targetItem] || 0) > 0) res = targetItem
-        } else {
-          const sellable = Object.keys(node.buffer).filter(r => r !== 'coin' && node.buffer[r] > 0)
-          if (sellable.length > 0) res = pickRandom(sellable)
-        }
-        if (res) {
-          node.buffer[res] -= 1
-          if (node.buffer[res] === 0) delete node.buffer[res]
-          const coins = marketPrices[res] || 1
-          sendResourceFrom(node, 'coin', newNodes, coins)
-        }
-        const coinCount = node.buffer['coin'] || 0
-        if (coinCount > 0) {
-          const outs = getOutEdges(node.id)
-          if (outs.length > 0) {
-            const edge = pickRandom(outs)
-            const toNode = newNodes.find(n => n.id === edge.to)
-            if (toNode) {
-              node.buffer['coin'] -= 1
-              if (node.buffer['coin'] === 0) delete node.buffer['coin']
-              launchAnimNodes(node, 'coin', toNode)
-            }
-          }
-        }
-      }
-
-      // isSink: accumulates whatever arrives, no action needed
-    }
-
-    nodes = newNodes
-  }
-
-  function sendResourceFrom(node, res, allNodes, count = 1) {
-    const outs = getOutEdges(node.id)
-    if (outs.length === 0) {
-      node.buffer[res] = (node.buffer[res] || 0) + count
-    } else {
-      const edge = pickRandom(outs)
-      const toNode = allNodes.find(n => n.id === edge.to)
-      if (toNode) {
-        launchAnimNodes(node, res, toNode, count)
-      } else {
-        node.buffer[res] = (node.buffer[res] || 0) + count
-      }
-    }
-  }
-
-  function launchAnimNodes(fromNode, res, toNode, count = 1) {
-    const anim = {
-      id: nextId++,
-      resource: res,
-      count,
-      x1: fromNode.x,
-      y1: fromNode.y,
-      x2: toNode.x,
-      y2: toNode.y,
-      startTime: performance.now(),
-    }
-    animations = [...animations, anim]
-    const toId = toNode.id
-    setTimeout(() => {
-      animations = animations.filter(a => a.id !== anim.id)
-      const dest = nodes.find(n => n.id === toId)
-      if (dest) {
-        dest.buffer = { ...dest.buffer, [res]: (dest.buffer[res] || 0) + count }
-        nodes = [...nodes]
-      }
-    }, ANIM_DURATION)
-  }
-
-  // ── Tick interval ──────────────────────────────────────────────────────────
+  let pinchState = null
   let tickInterval = null
+  let rafId = null
 
-  function startTick() {
-    if (tickInterval) clearInterval(tickInterval)
-    if (speed === 0) return
-    tickInterval = setInterval(tick, TICK_BASE / speed)
-  }
+  // Derived
+  const selectedNode = $derived(gs.nodes.find(n => n.id === gs.selectedId))
+  const customizeNode = $derived(gs.nodes.find(n => n.id === gs.customizeId))
+  const pickerEdge = $derived(gs.edges.find(e => e.id === gs.edgePickerId))
 
+  // Initial lumberjack
+  gs.nodes = [gs.mkNode('lumberjack', 50, 50)]
+
+  // Centre initial node once viewport is known
   $effect(() => {
-    startTick()
+    if (gs.nodes.length === 1 && gs.nodes[0].x === 50) {
+      gs.nodes[0] = { ...gs.nodes[0], x: Math.round(window.innerWidth / 2), y: Math.round(window.innerHeight / 2 - 60) }
+    }
+  })
+
+  // Tick interval — re-runs when gs.speed changes
+  $effect(() => {
+    if (tickInterval) clearInterval(tickInterval)
+    if (gs.speed === 0) { tickInterval = null; return }
+    tickInterval = setInterval(() => gs.tick(), TICK_BASE / gs.speed)
     return () => { if (tickInterval) clearInterval(tickInterval) }
   })
 
-  // Centre the initial lumberjack once we know viewport size
+  // Animation RAF loop
   $effect(() => {
-    if (nodes.length === 1 && nodes[0].x === 50) {
-      const w = window.innerWidth
-      const h = window.innerHeight
-      nodes[0] = { ...nodes[0], x: Math.round(w / 2), y: Math.round(h / 2 - 60) }
-    }
-  })
-
-  // ── SVG animation frame ────────────────────────────────────────────────────
-  let animFrame = $state(0)
-  let rafId = null
-
-  function rafLoop() {
-    animFrame = performance.now()
-    rafId = requestAnimationFrame(rafLoop)
-  }
-
-  $effect(() => {
-    rafId = requestAnimationFrame(rafLoop)
+    function loop() { gs.animFrame = performance.now(); rafId = requestAnimationFrame(loop) }
+    rafId = requestAnimationFrame(loop)
     return () => cancelAnimationFrame(rafId)
   })
 
-  // ── Interaction ────────────────────────────────────────────────────────────
+  // ── Helpers ────────────────────────────────────────────────────────────────
   function getNodeAt(x, y) {
-    for (let i = nodes.length - 1; i >= 0; i--) {
-      const n = nodes[i]
-      const dx = n.x - x
-      const dy = n.y - y
+    for (let i = gs.nodes.length - 1; i >= 0; i--) {
+      const n = gs.nodes[i]
+      const dx = n.x - x, dy = n.y - y
       if (dx * dx + dy * dy <= NODE_RADIUS * NODE_RADIUS) return n
     }
     return null
   }
 
   function getEdgeAt(x, y) {
-    for (const e of edges) {
-      const from = nodes.find(n => n.id === e.from)
-      const to = nodes.find(n => n.id === e.to)
+    for (const e of gs.edges) {
+      const from = gs.nodes.find(n => n.id === e.from)
+      const to = gs.nodes.find(n => n.id === e.to)
       if (!from || !to) continue
-      // Distance from point to line segment
-      const dx = to.x - from.x
-      const dy = to.y - from.y
+      const dx = to.x - from.x, dy = to.y - from.y
       const len2 = dx * dx + dy * dy
       if (len2 === 0) continue
       const t = Math.max(0, Math.min(1, ((x - from.x) * dx + (y - from.y) * dy) / len2))
       const px = from.x + t * dx - x
       const py = from.y + t * dy - y
-      if (px * px + py * py < 10 * 10) return e
+      if (px * px + py * py < 15 * 15) return e
     }
     return null
   }
 
-  function svgRect() {
-    return document.querySelector('#graph-svg').getBoundingClientRect()
+  function animPos(anim) {
+    const t = Math.min(1, (gs.animFrame - anim.startTime) / ANIM_DURATION)
+    return { x: anim.x1 + (anim.x2 - anim.x1) * t, y: anim.y1 + (anim.y2 - anim.y1) * t }
   }
 
-  function svgCoords(evt) {
-    const rect = svgRect()
-    const touch = evt.touches ? evt.touches[0] : evt
-    const sx = touch.clientX - rect.left
-    const sy = touch.clientY - rect.top
-    return { x: (sx - cam.x) / cam.scale, y: (sy - cam.y) / cam.scale }
+  function bufferEntries(node) {
+    return Object.entries(node.buffer).filter(([, c]) => c > 0)
   }
 
-  function screenPt(clientX, clientY) {
-    const rect = svgRect()
-    return { x: clientX - rect.left, y: clientY - rect.top }
-  }
-
-  function getTouchDist(t1, t2) {
-    const dx = t1.clientX - t2.clientX
-    const dy = t1.clientY - t2.clientY
-    return Math.sqrt(dx * dx + dy * dy)
-  }
-
-  function getTouchMid(t1, t2) {
-    const rect = svgRect()
-    return {
-      x: (t1.clientX + t2.clientX) / 2 - rect.left,
-      y: (t1.clientY + t2.clientY) / 2 - rect.top,
-    }
-  }
-
+  // ── SVG pointer events ─────────────────────────────────────────────────────
   function onSvgPointerDown(evt) {
     if (isPinching) return
     evt.preventDefault()
     evt.currentTarget.setPointerCapture(evt.pointerId)
-    const { x, y } = svgCoords(evt)
+    const { x, y } = svgCoords(evt, gs.cam)
     const node = getNodeAt(x, y)
 
-    if (mode === 'select') {
+    if (gs.mode === 'select') {
       if (node) {
-        selectedId = node.id
-        isDragging = false
-        dragState = { nodeId: node.id, startX: x, startY: y, nodeStartX: node.x, nodeStartY: node.y }
+        gs.selectedId = node.id
+        gs.selectedEdgeId = null
+        gs.edgeTapPos = null
+        gs.isDragging = false
+        gs.dragState = { nodeId: node.id, startX: x, startY: y, nodeStartX: node.x, nodeStartY: node.y }
       } else {
         const edge = getEdgeAt(x, y)
         if (edge) {
-          edges = edges.filter(e => e.id !== edge.id)
+          gs.selectedEdgeId = edge.id
+          gs.edgeTapPos = { x, y }
+          gs.selectedId = null
         } else {
-          selectedId = null
-          // Start canvas pan
+          gs.selectedId = null
+          gs.selectedEdgeId = null
+          gs.edgeTapPos = null
           const sc = screenPt(evt.clientX, evt.clientY)
-          panState = { startScreenX: sc.x, startScreenY: sc.y, camStartX: cam.x, camStartY: cam.y }
+          panState = { startScreenX: sc.x, startScreenY: sc.y, camStartX: gs.cam.x, camStartY: gs.cam.y }
         }
-        dragState = null
-        isDragging = false
+        gs.dragState = null
+        gs.isDragging = false
       }
-    } else if (mode === 'connect') {
-      if (node && node.id !== connectSourceId) {
-        const alreadyExists = edges.some(e => e.from === connectSourceId && e.to === node.id)
+    } else if (gs.mode === 'connect') {
+      if (node && node.id !== gs.connectSourceId) {
+        const alreadyExists = gs.edges.some(e => e.from === gs.connectSourceId && e.to === node.id)
         if (!alreadyExists) {
-          edges = [...edges, { id: nextId++, from: connectSourceId, to: node.id }]
+          gs.edges = [...gs.edges, { id: gs.nextId++, from: gs.connectSourceId, to: node.id, resource: null }]
         }
-        connectSourceId = null
-        mode = 'select'
+        gs.connectSourceId = null
+        gs.mode = 'select'
       } else if (!node) {
-        connectSourceId = null
-        mode = 'select'
+        gs.connectSourceId = null
+        gs.mode = 'select'
       }
     }
   }
 
   function onSvgPointerMove(evt) {
     if (isPinching) return
-
     if (panState) {
       evt.preventDefault()
       const sc = screenPt(evt.clientX, evt.clientY)
-      cam.x = panState.camStartX + (sc.x - panState.startScreenX)
-      cam.y = panState.camStartY + (sc.y - panState.startScreenY)
+      gs.cam.x = panState.camStartX + (sc.x - panState.startScreenX)
+      gs.cam.y = panState.camStartY + (sc.y - panState.startScreenY)
       return
     }
-
-    if (!dragState || mode !== 'select') return
+    if (!gs.dragState || gs.mode !== 'select') return
     evt.preventDefault()
-    const { x, y } = svgCoords(evt)
-    const dx = x - dragState.startX
-    const dy = y - dragState.startY
-    if (Math.abs(dx) > 4 || Math.abs(dy) > 4) isDragging = true
-    if (isDragging) {
-      const idx = nodes.findIndex(n => n.id === dragState.nodeId)
+    const { x, y } = svgCoords(evt, gs.cam)
+    const dx = x - gs.dragState.startX, dy = y - gs.dragState.startY
+    if (Math.abs(dx) > 4 || Math.abs(dy) > 4) gs.isDragging = true
+    if (gs.isDragging) {
+      const idx = gs.nodes.findIndex(n => n.id === gs.dragState.nodeId)
       if (idx !== -1) {
-        const updated = [...nodes]
-        updated[idx] = { ...updated[idx], x: dragState.nodeStartX + dx, y: dragState.nodeStartY + dy }
-        nodes = updated
+        const updated = [...gs.nodes]
+        updated[idx] = { ...updated[idx], x: gs.dragState.nodeStartX + dx, y: gs.dragState.nodeStartY + dy }
+        gs.nodes = updated
       }
     }
   }
 
-  function onSvgPointerUp(evt) {
+  function onSvgPointerUp() {
     panState = null
-    if (dragState && !isDragging && mode === 'select') {
-      selectedId = dragState.nodeId
+    if (gs.dragState && !gs.isDragging && gs.mode === 'select') {
+      gs.selectedId = gs.dragState.nodeId
     }
-    dragState = null
-    isDragging = false
+    gs.dragState = null
+    gs.isDragging = false
   }
 
   function onSvgPointerCancel() {
     panState = null
-    dragState = null
-    isDragging = false
+    gs.dragState = null
+    gs.isDragging = false
   }
 
   function onTouchStart(evt) {
     if (evt.touches.length === 2) {
       isPinching = true
-      dragState = null
-      isDragging = false
+      gs.dragState = null
+      gs.isDragging = false
       panState = null
-      const t1 = evt.touches[0]
-      const t2 = evt.touches[1]
+      const t1 = evt.touches[0], t2 = evt.touches[1]
       pinchState = {
         startDist: getTouchDist(t1, t2),
         startMid: getTouchMid(t1, t2),
-        camStartX: cam.x,
-        camStartY: cam.y,
-        camStartScale: cam.scale,
+        camStartX: gs.cam.x, camStartY: gs.cam.y, camStartScale: gs.cam.scale,
       }
       evt.preventDefault()
     }
@@ -370,163 +183,116 @@
   function onTouchMove(evt) {
     if (!isPinching || evt.touches.length < 2) return
     evt.preventDefault()
-    const t1 = evt.touches[0]
-    const t2 = evt.touches[1]
+    const t1 = evt.touches[0], t2 = evt.touches[1]
     const dist = getTouchDist(t1, t2)
     const mid = getTouchMid(t1, t2)
-    const newScale = Math.max(SCALE_MIN, Math.min(SCALE_MAX,
-      pinchState.camStartScale * (dist / pinchState.startDist)))
-    // Keep the initial midpoint's world position fixed under the current midpoint
+    const newScale = Math.max(SCALE_MIN, Math.min(SCALE_MAX, pinchState.camStartScale * (dist / pinchState.startDist)))
     const worldMidX = (pinchState.startMid.x - pinchState.camStartX) / pinchState.camStartScale
     const worldMidY = (pinchState.startMid.y - pinchState.camStartY) / pinchState.camStartScale
-    cam.x = mid.x - worldMidX * newScale
-    cam.y = mid.y - worldMidY * newScale
-    cam.scale = newScale
+    gs.cam.x = mid.x - worldMidX * newScale
+    gs.cam.y = mid.y - worldMidY * newScale
+    gs.cam.scale = newScale
   }
 
   function onTouchEnd(evt) {
-    if (evt.touches.length < 2) {
-      isPinching = false
-      pinchState = null
-    }
+    if (evt.touches.length < 2) { isPinching = false; pinchState = null }
   }
 
   function onWheel(evt) {
     evt.preventDefault()
     const sc = screenPt(evt.clientX, evt.clientY)
     const factor = evt.deltaY > 0 ? 0.9 : 1.1
-    const newScale = Math.max(SCALE_MIN, Math.min(SCALE_MAX, cam.scale * factor))
-    const worldX = (sc.x - cam.x) / cam.scale
-    const worldY = (sc.y - cam.y) / cam.scale
-    cam.x = sc.x - worldX * newScale
-    cam.y = sc.y - worldY * newScale
-    cam.scale = newScale
+    const newScale = Math.max(SCALE_MIN, Math.min(SCALE_MAX, gs.cam.scale * factor))
+    const worldX = (sc.x - gs.cam.x) / gs.cam.scale
+    const worldY = (sc.y - gs.cam.y) / gs.cam.scale
+    gs.cam.x = sc.x - worldX * newScale
+    gs.cam.y = sc.y - worldY * newScale
+    gs.cam.scale = newScale
   }
 
+  // ── Node actions ───────────────────────────────────────────────────────────
   function onConnectBtn() {
-    connectSourceId = selectedId
-    mode = 'connect'
+    gs.connectSourceId = gs.selectedId
+    gs.mode = 'connect'
   }
 
-  function onDeleteBtn() {
-    const id = selectedId
-    nodes = nodes.filter(n => n.id !== id)
-    edges = edges.filter(e => e.from !== id && e.to !== id)
-    selectedId = null
-    mode = 'select'
+  function onDeleteNodeBtn() {
+    const id = gs.selectedId
+    gs.nodes = gs.nodes.filter(n => n.id !== id)
+    gs.edges = gs.edges.filter(e => e.from !== id && e.to !== id)
+    gs.selectedId = null
   }
 
   function onCustomizeBtn() {
-    customizeId = selectedId
-  }
-
-  function closeCustomize() {
-    customizeId = null
+    gs.customizeId = gs.selectedId
   }
 
   function setMerchantSellItem(nodeId, value) {
-    nodes = nodes.map(n => n.id === nodeId ? { ...n, settings: { ...n.settings, sellItem: value || null } } : n)
+    gs.nodes = gs.nodes.map(n =>
+      n.id === nodeId ? { ...n, settings: { ...n.settings, sellItem: value || null } } : n
+    )
+    gs.customizeId = null
   }
 
+  // ── Edge actions ───────────────────────────────────────────────────────────
+  function onDeleteEdgeBtn() {
+    gs.edges = gs.edges.filter(e => e.id !== gs.selectedEdgeId)
+    gs.selectedEdgeId = null
+    gs.edgeTapPos = null
+  }
+
+  function onSetResourceBtn() {
+    gs.edgePickerId = gs.selectedEdgeId
+    gs.selectedEdgeId = null
+    gs.edgeTapPos = null
+  }
+
+  function setEdgeResource(edgeId, value) {
+    gs.edges = gs.edges.map(e =>
+      e.id === edgeId ? { ...e, resource: value || null } : e
+    )
+    gs.edgePickerId = null
+  }
+
+  // ── Tool drag (toolbar → canvas) ──────────────────────────────────────────
   function startToolDrag(type, evt) {
     evt.preventDefault()
     evt.stopPropagation()
     evt.currentTarget.setPointerCapture(evt.pointerId)
-    toolDrag = { type, clientX: evt.clientX, clientY: evt.clientY }
+    gs.toolDrag = { type, clientX: evt.clientX, clientY: evt.clientY }
     window.addEventListener('pointermove', moveToolDrag)
     window.addEventListener('pointerup', endToolDrag)
     window.addEventListener('pointercancel', cancelToolDrag)
   }
 
   function moveToolDrag(evt) {
-    if (!toolDrag) return
-    evt.preventDefault()
-    toolDrag = { ...toolDrag, clientX: evt.clientX, clientY: evt.clientY }
+    if (!gs.toolDrag) return
+    gs.toolDrag = { ...gs.toolDrag, clientX: evt.clientX, clientY: evt.clientY }
   }
 
   function endToolDrag(evt) {
     window.removeEventListener('pointermove', moveToolDrag)
     window.removeEventListener('pointerup', endToolDrag)
     window.removeEventListener('pointercancel', cancelToolDrag)
-    if (!toolDrag) return
-    const { type } = toolDrag
-    const clientX = evt.clientX
-    const clientY = evt.clientY
-    toolDrag = null
-
-    // Place node only if released over the SVG canvas
+    if (!gs.toolDrag) return
+    const { type } = gs.toolDrag
+    gs.toolDrag = null
     const svgEl = document.querySelector('#graph-svg')
     const svgR = svgEl.getBoundingClientRect()
-    if (clientX < svgR.left || clientX > svgR.right || clientY < svgR.top || clientY > svgR.bottom) return
-
-    const wx = (clientX - svgR.left - cam.x) / cam.scale
-    const wy = (clientY - svgR.top - cam.y) / cam.scale
-    nodes = [...nodes, mkNode(type, wx, wy)]
+    const cx = evt.clientX, cy = evt.clientY
+    if (cx < svgR.left || cx > svgR.right || cy < svgR.top || cy > svgR.bottom) return
+    gs.nodes = [...gs.nodes, gs.mkNode(type,
+      (cx - svgR.left - gs.cam.x) / gs.cam.scale,
+      (cy - svgR.top - gs.cam.y) / gs.cam.scale
+    )]
   }
 
   function cancelToolDrag() {
     window.removeEventListener('pointermove', moveToolDrag)
     window.removeEventListener('pointerup', endToolDrag)
     window.removeEventListener('pointercancel', cancelToolDrag)
-    toolDrag = null
+    gs.toolDrag = null
   }
-
-  // ── Derived: animated positions ────────────────────────────────────────────
-  function animPos(anim) {
-    const now = animFrame
-    const t = Math.min(1, (now - anim.startTime) / ANIM_DURATION)
-    return {
-      x: anim.x1 + (anim.x2 - anim.x1) * t,
-      y: anim.y1 + (anim.y2 - anim.y1) * t,
-    }
-  }
-
-  // Arrow head helper
-  function arrowHead(x1, y1, x2, y2) {
-    const dx = x2 - x1
-    const dy = y2 - y1
-    const len = Math.sqrt(dx * dx + dy * dy)
-    if (len < 1) return ''
-    const ux = dx / len
-    const uy = dy / len
-    // Tip: at node radius + small gap from target
-    const tipX = x2 - ux * (NODE_RADIUS + 2)
-    const tipY = y2 - uy * (NODE_RADIUS + 2)
-    const baseX = tipX - ux * 12
-    const baseY = tipY - uy * 12
-    const perpX = -uy * 5
-    const perpY = ux * 5
-    return `M${tipX},${tipY} L${baseX + perpX},${baseY + perpY} L${baseX - perpX},${baseY - perpY} Z`
-  }
-
-  // Line endpoints clipped to node edge
-  function edgeLine(from, to) {
-    const dx = to.x - from.x
-    const dy = to.y - from.y
-    const len = Math.sqrt(dx * dx + dy * dy)
-    if (len < 1) return { x1: from.x, y1: from.y, x2: to.x, y2: to.y }
-    const ux = dx / len
-    const uy = dy / len
-    return {
-      x1: from.x + ux * (NODE_RADIUS + 2),
-      y1: from.y + uy * (NODE_RADIUS + 2),
-      x2: to.x - ux * (NODE_RADIUS + 2),
-      y2: to.y - uy * (NODE_RADIUS + 2),
-    }
-  }
-
-  // Buffer display
-  function bufferEntries(node) {
-    return Object.entries(node.buffer).filter(([, c]) => c > 0)
-  }
-
-  // Action button positions relative to node
-  function actionBtnPos(node, index) {
-    return { x: node.x + (index === 0 ? -36 : 36), y: node.y - NODE_RADIUS - 20 }
-  }
-
-  const selectedNode = $derived(nodes.find(n => n.id === selectedId))
-  const customizeNode = $derived(nodes.find(n => n.id === customizeId))
 </script>
 
 <svelte:head>
@@ -538,13 +304,11 @@
   <!-- Market price bar -->
   <div class="market-bar">
     <span class="market-label">Market:</span>
-    {#each Object.entries(marketPrices) as [res, price]}
-      <span class="market-item">
-        {RESOURCE_ICONS[res]} = {price}{RESOURCE_ICONS['coin']}
-      </span>
+    {#each Object.entries(gs.marketPrices) as [res, price]}
+      <span class="market-item">{RESOURCE_ICONS[res]} = {price}{RESOURCE_ICONS['coin']}</span>
     {/each}
     <span class="market-mode">
-      {#if mode === 'connect'}🔗 Connect{:else}✏️ Select{/if}
+      {#if gs.mode === 'connect'}🔗 Connect{:else}✏️ Select{/if}
     </span>
   </div>
 
@@ -562,155 +326,133 @@
     ontouchend={onTouchEnd}
     onwheel={onWheel}
   >
-  <g transform="translate({cam.x},{cam.y}) scale({cam.scale})">
-    <!-- Edges -->
-    {#each edges as edge (edge.id)}
-      {@const from = nodes.find(n => n.id === edge.from)}
-      {@const to = nodes.find(n => n.id === edge.to)}
-      {#if from && to}
-        {@const line = edgeLine(from, to)}
-        <line
-          class="edge"
-          x1={line.x1} y1={line.y1}
-          x2={line.x2} y2={line.y2}
-        />
-        <path
-          class="arrowhead"
-          d={arrowHead(from.x, from.y, to.x, to.y)}
-        />
-      {/if}
-    {/each}
+    <g transform="translate({gs.cam.x},{gs.cam.y}) scale({gs.cam.scale})">
 
-    <!-- Animations -->
-    {#each animations as anim (anim.id)}
-      {@const pos = animPos(anim)}
-      <text class="anim-resource" x={pos.x} y={pos.y}>
-        {RESOURCE_ICONS[anim.resource]}
-      </text>
-    {/each}
-
-    <!-- Nodes -->
-    {#each nodes as node (node.id)}
-      {@const isSelected = node.id === selectedId}
-      {@const buf = bufferEntries(node)}
-
-      <!-- Selected ring -->
-      {#if isSelected}
-        <circle
-          class="selected-ring"
-          cx={node.x} cy={node.y}
-          r={NODE_RADIUS + 5}
-        />
-      {/if}
-
-      <!-- Node circle -->
-      <circle
-        class="node"
-        cx={node.x} cy={node.y}
-        r={NODE_RADIUS}
-        fill={NODE_REGISTRY[node.type].color}
-      />
-
-      <!-- Node emoji icon -->
-      <text class="node-emoji" x={node.x} y={node.y + 9}>
-        {NODE_REGISTRY[node.type].emoji}
-      </text>
-
-      <!-- Node label -->
-      <text class="node-label" x={node.x} y={node.y + NODE_RADIUS + 14}>
-        {NODE_REGISTRY[node.type].label}
-      </text>
-
-      <!-- Buffer display -->
-      {#each buf as [res, count], i}
-        <text
-          class="buffer-resource"
-          x={node.x + (i - (buf.length - 1) / 2) * 32}
-          y={node.y + NODE_RADIUS + 30}
-        >
-          {RESOURCE_ICONS[res]}{count > 1 ? count : ''}
-        </text>
+      <!-- Edges -->
+      {#each gs.edges as edge (edge.id)}
+        {@const from = gs.nodes.find(n => n.id === edge.from)}
+        {@const to = gs.nodes.find(n => n.id === edge.to)}
+        {#if from && to}
+          {@const line = edgeLine(from, to, NODE_RADIUS)}
+          {@const isEdgeSel = edge.id === gs.selectedEdgeId}
+          <line
+            class="edge"
+            x1={line.x1} y1={line.y1}
+            x2={line.x2} y2={line.y2}
+            stroke={isEdgeSel ? '#7c3aed' : '#555'}
+          />
+          <path
+            class="arrowhead"
+            d={arrowHead(from.x, from.y, to.x, to.y, NODE_RADIUS)}
+            fill={isEdgeSel ? '#7c3aed' : '#555'}
+          />
+          <!-- Edge resource icon at midpoint -->
+          {#if edge.resource}
+            <text class="edge-resource-icon"
+              x={(from.x + to.x) / 2}
+              y={(from.y + to.y) / 2}
+            >{RESOURCE_ICONS[edge.resource]}</text>
+          {/if}
+        {/if}
       {/each}
 
-      <!-- Action buttons when selected -->
-      {#if isSelected && mode === 'select'}
-        <!-- Connect button -->
-        <g
-          class="action-btn"
-          transform={`translate(${node.x - 52}, ${node.y - NODE_RADIUS - 32})`}
-          onpointerdown={e => { e.stopPropagation(); onConnectBtn() }}
-        >
-          <rect x="-24" y="-24" width="48" height="48" rx="10" fill="#7c3aed" />
-          <text class="action-label" x="0" y="7">🔗</text>
-        </g>
+      <!-- Animations -->
+      {#each gs.animations as anim (anim.id)}
+        {@const pos = animPos(anim)}
+        <text class="anim-resource" x={pos.x} y={pos.y}>{RESOURCE_ICONS[anim.resource]}</text>
+      {/each}
 
-        <!-- Customize button -->
-        {@const isMerchant = NODE_REGISTRY[node.type].isMerchant}
-        <g
-          class="action-btn"
-          transform={`translate(${node.x}, ${node.y - NODE_RADIUS - 32})`}
-          opacity={isMerchant ? 1 : 0.35}
-          onpointerdown={e => { e.stopPropagation(); if (isMerchant) onCustomizeBtn() }}
-        >
-          <rect x="-24" y="-24" width="48" height="48" rx="10" fill={isMerchant ? '#374151' : '#1f2937'} />
-          <text class="action-label" x="0" y="7">⚙️</text>
-        </g>
+      <!-- Nodes -->
+      {#each gs.nodes as node (node.id)}
+        {@const isSelected = node.id === gs.selectedId}
+        {@const buf = bufferEntries(node)}
+        {@const def = NODE_REGISTRY[node.type]}
 
-        <!-- Delete button -->
-        <g
-          class="action-btn"
-          transform={`translate(${node.x + 52}, ${node.y - NODE_RADIUS - 32})`}
-          onpointerdown={e => { e.stopPropagation(); onDeleteBtn() }}
-        >
-          <rect x="-24" y="-24" width="48" height="48" rx="10" fill="#dc2626" />
-          <text class="action-label" x="0" y="7">🗑️</text>
-        </g>
+        {#if isSelected}
+          <circle class="selected-ring" cx={node.x} cy={node.y} r={NODE_RADIUS + 5} />
+        {/if}
+
+        <circle class="node" cx={node.x} cy={node.y} r={NODE_RADIUS} fill={def.color} />
+        <text class="node-emoji" x={node.x} y={node.y + 9}>{def.emoji}</text>
+        <text class="node-label" x={node.x} y={node.y + NODE_RADIUS + 14}>{def.label}</text>
+
+        <!-- Merchant sell item icon -->
+        {#if def.isMerchant && node.settings.sellItem}
+          <text class="merchant-sell-icon" x={node.x} y={node.y + NODE_RADIUS + 28}>
+            {RESOURCE_ICONS[node.settings.sellItem]}
+          </text>
+        {/if}
+
+        <!-- Buffer display -->
+        {#each buf as [res, count], i}
+          <text
+            class="buffer-resource"
+            x={node.x + (i - (buf.length - 1) / 2) * 32}
+            y={node.y + NODE_RADIUS + (def.isMerchant && node.settings.sellItem ? 46 : 30)}
+          >
+            {RESOURCE_ICONS[res]}{count > 1 ? count : ''}
+          </text>
+        {/each}
+
+        <!-- Node context menu when selected -->
+        {#if isSelected && gs.mode === 'select'}
+          <NodeContextMenu
+            {node}
+            onConnect={onConnectBtn}
+            onCustomize={onCustomizeBtn}
+            onDelete={onDeleteNodeBtn}
+          />
+        {/if}
+      {/each}
+
+      <!-- Edge context menu -->
+      {#if gs.selectedEdgeId && gs.edgeTapPos}
+        <EdgeContextMenu
+          x={gs.edgeTapPos.x}
+          y={gs.edgeTapPos.y}
+          onSetResource={onSetResourceBtn}
+          onDelete={onDeleteEdgeBtn}
+        />
       {/if}
-    {/each}
 
-    <!-- Connect mode: show dashed line from source to indicate -->
-    {#if mode === 'connect' && connectSourceId}
-      {@const src = nodes.find(n => n.id === connectSourceId)}
-      {#if src}
-        <circle cx={src.x} cy={src.y} r={NODE_RADIUS + 8} fill="none" stroke="#7c3aed" stroke-width="2" stroke-dasharray="6 4" />
+      <!-- Connect mode: dashed ring on source node -->
+      {#if gs.mode === 'connect' && gs.connectSourceId}
+        {@const src = gs.nodes.find(n => n.id === gs.connectSourceId)}
+        {#if src}
+          <circle cx={src.x} cy={src.y} r={NODE_RADIUS + 8}
+            fill="none" stroke="#7c3aed" stroke-width="2" stroke-dasharray="6 4" />
+        {/if}
       {/if}
-    {/if}
-  </g>
+
+    </g>
   </svg>
 
   <!-- Ghost node while dragging from toolbar -->
-  {#if toolDrag}
+  {#if gs.toolDrag}
     <div
       class="ghost-node"
-      style="left: {toolDrag.clientX - 25}px; top: {toolDrag.clientY - 25}px; --color: {NODE_REGISTRY[toolDrag.type].color}"
+      style="left: {gs.toolDrag.clientX - 25}px; top: {gs.toolDrag.clientY - 25}px; --color: {NODE_REGISTRY[gs.toolDrag.type].color}"
     >
-      <span class="ghost-emoji">{NODE_REGISTRY[toolDrag.type].emoji}</span>
+      <span class="ghost-emoji">{NODE_REGISTRY[gs.toolDrag.type].emoji}</span>
     </div>
   {/if}
 
-  <!-- Customize modal -->
-  {#if customizeId && customizeNode}
-    <div class="modal-backdrop" onpointerdown={closeCustomize}>
-      <div class="modal-panel" onpointerdown={e => e.stopPropagation()}>
-        <div class="modal-title">{NODE_REGISTRY[customizeNode.type].label} Settings</div>
-        {#if NODE_REGISTRY[customizeNode.type].isMerchant}
-          <label class="modal-field">
-            <span class="modal-field-label">Sell item</span>
-            <select
-              class="modal-select"
-              value={customizeNode.settings.sellItem ?? ''}
-              onchange={e => setMerchantSellItem(customizeNode.id, e.currentTarget.value)}
-            >
-              <option value="">Random (any item)</option>
-              {#each RESOURCES.filter(r => r !== 'coin') as res}
-                <option value={res}>{RESOURCE_ICONS[res]} {res.charAt(0).toUpperCase() + res.slice(1)}</option>
-              {/each}
-            </select>
-          </label>
-        {/if}
-        <button class="modal-close-btn" onpointerdown={closeCustomize}>Done</button>
-      </div>
-    </div>
+  <!-- Merchant customize panel -->
+  {#if gs.customizeId && customizeNode}
+    <CustomizePanel
+      node={customizeNode}
+      onClose={() => gs.customizeId = null}
+      onSetSellItem={setMerchantSellItem}
+    />
+  {/if}
+
+  <!-- Edge resource picker -->
+  {#if gs.edgePickerId && pickerEdge}
+    <EdgeResourcePicker
+      edge={pickerEdge}
+      onClose={() => gs.edgePickerId = null}
+      onSetResource={setEdgeResource}
+    />
   {/if}
 
   <!-- Toolbar -->
@@ -728,9 +470,9 @@
       {/each}
     </div>
     <div class="toolbar-right">
-      <button class="time-btn {speed === 0 ? 'active' : ''}" onpointerdown={() => speed = 0}>⏸</button>
-      <button class="time-btn {speed === 1 ? 'active' : ''}" onpointerdown={() => speed = 1}>▶</button>
-      <button class="time-btn {speed === 3 ? 'active' : ''}" onpointerdown={() => speed = 3}>⏩</button>
+      <button class="time-btn {gs.speed === 0 ? 'active' : ''}" onpointerdown={() => gs.speed = 0}>⏸</button>
+      <button class="time-btn {gs.speed === 1 ? 'active' : ''}" onpointerdown={() => gs.speed = 1}>▶</button>
+      <button class="time-btn {gs.speed === 3 ? 'active' : ''}" onpointerdown={() => gs.speed = 3}>⏩</button>
     </div>
   </div>
 </div>
@@ -762,7 +504,6 @@
     overflow: hidden;
   }
 
-  /* Market bar */
   .market-bar {
     display: flex;
     align-items: center;
@@ -776,22 +517,10 @@
     flex-wrap: wrap;
   }
 
-  .market-label {
-    color: #666;
-  }
+  .market-label { color: #666; }
+  .market-item { color: #fbbf24; font-weight: 600; }
+  .market-mode { margin-left: auto; color: #7c3aed; font-size: 12px; }
 
-  .market-item {
-    color: #fbbf24;
-    font-weight: 600;
-  }
-
-  .market-mode {
-    margin-left: auto;
-    color: #7c3aed;
-    font-size: 12px;
-  }
-
-  /* SVG canvas */
   .graph {
     flex: 1;
     width: 100%;
@@ -800,13 +529,11 @@
   }
 
   :global(.edge) {
-    stroke: #555;
     stroke-width: 1.5;
     pointer-events: none;
   }
 
   :global(.arrowhead) {
-    fill: #555;
     pointer-events: none;
   }
 
@@ -838,6 +565,14 @@
     pointer-events: none;
   }
 
+  :global(.merchant-sell-icon) {
+    font-size: 13px;
+    text-anchor: middle;
+    dominant-baseline: middle;
+    pointer-events: none;
+    opacity: 0.9;
+  }
+
   :global(.buffer-resource) {
     fill: #e8e8e8;
     font-size: 13px;
@@ -852,9 +587,14 @@
     pointer-events: none;
   }
 
-  :global(.action-btn) {
-    cursor: pointer;
+  :global(.edge-resource-icon) {
+    font-size: 14px;
+    text-anchor: middle;
+    dominant-baseline: middle;
+    pointer-events: none;
   }
+
+  :global(.action-btn) { cursor: pointer; }
 
   :global(.action-label) {
     font-size: 16px;
@@ -862,7 +602,6 @@
     pointer-events: none;
   }
 
-  /* Toolbar */
   .toolbar {
     display: flex;
     align-items: center;
@@ -876,15 +615,8 @@
     gap: 8px;
   }
 
-  .toolbar-left {
-    display: flex;
-    gap: 8px;
-  }
-
-  .toolbar-right {
-    display: flex;
-    gap: 8px;
-  }
+  .toolbar-left { display: flex; gap: 8px; }
+  .toolbar-right { display: flex; gap: 8px; }
 
   .tool-btn {
     display: flex;
@@ -905,16 +637,8 @@
     touch-action: none;
   }
 
-  .tool-icon {
-    font-size: 20px;
-    line-height: 1;
-  }
-
-  .tool-label {
-    font-size: 9px;
-    color: #aaa;
-    font-family: ui-monospace, monospace;
-  }
+  .tool-icon { font-size: 20px; line-height: 1; }
+  .tool-label { font-size: 9px; color: #aaa; font-family: ui-monospace, monospace; }
 
   .time-btn {
     display: flex;
@@ -950,75 +674,5 @@
     z-index: 1000;
   }
 
-  .ghost-emoji {
-    font-size: 24px;
-    line-height: 1;
-  }
-
-  .modal-backdrop {
-    position: fixed;
-    inset: 0;
-    background: rgba(0, 0, 0, 0.6);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: 200;
-  }
-
-  .modal-panel {
-    background: #111;
-    border: 1px solid #333;
-    border-radius: 12px;
-    padding: 20px;
-    min-width: 260px;
-    max-width: 90vw;
-    display: flex;
-    flex-direction: column;
-    gap: 16px;
-  }
-
-  .modal-title {
-    font-size: 15px;
-    font-weight: 600;
-    color: #e8e8e8;
-  }
-
-  .modal-field {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-  }
-
-  .modal-field-label {
-    font-size: 12px;
-    color: #aaa;
-  }
-
-  .modal-select {
-    background: #1a1a1a;
-    border: 1px solid #444;
-    border-radius: 8px;
-    color: #e8e8e8;
-    font-family: inherit;
-    font-size: 14px;
-    padding: 8px 10px;
-    cursor: pointer;
-    outline: none;
-    appearance: none;
-    -webkit-appearance: none;
-  }
-
-  .modal-close-btn {
-    align-self: flex-end;
-    background: #7c3aed;
-    border: none;
-    border-radius: 8px;
-    color: #e8e8e8;
-    font-family: inherit;
-    font-size: 14px;
-    font-weight: 600;
-    padding: 8px 20px;
-    cursor: pointer;
-    min-height: 40px;
-  }
+  .ghost-emoji { font-size: 24px; line-height: 1; }
 </style>
