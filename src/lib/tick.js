@@ -5,8 +5,9 @@ function bufferTotal(buffer) {
 }
 
 function tryAdd(node, def, res, count) {
-  if (bufferTotal(node.buffer) >= def.bufferCap) return
-  node.buffer[res] = (node.buffer[res] || 0) + count
+  const available = def.bufferCap - bufferTotal(node.buffer)
+  if (available <= 0) return
+  node.buffer[res] = (node.buffer[res] || 0) + Math.min(count, available)
 }
 
 export function runTick(nodes, edges, marketPrices) {

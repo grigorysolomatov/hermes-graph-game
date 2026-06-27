@@ -46,8 +46,12 @@ class GameState {
       this.animations = this.animations.filter(a => a.id !== anim.id)
       const idx = this.nodes.findIndex(n => n.id === toId)
       if (idx !== -1) {
+        const dest = this.nodes[idx]
+        const def = NODE_REGISTRY[dest.type]
+        if (!def) return
+        const total = Object.values(dest.buffer).reduce((s, v) => s + v, 0)
+        if (total >= def.bufferCap) return
         const updated = [...this.nodes]
-        const dest = updated[idx]
         updated[idx] = {
           ...dest,
           buffer: { ...dest.buffer, [resource]: (dest.buffer[resource] || 0) + 1 },
