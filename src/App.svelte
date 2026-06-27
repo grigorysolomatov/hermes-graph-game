@@ -417,7 +417,7 @@
 
         <!-- Merchant sell item icon -->
         {#if def.isMerchant && node.settings.sellItem}
-          <text class="merchant-sell-icon" x={node.x} y={node.y + NODE_RADIUS + 28}>
+          <text class="merchant-sell-icon" x={node.x + NODE_RADIUS + 10} y={node.y + 6}>
             {RESOURCE_ICONS[node.settings.sellItem]}
           </text>
         {/if}
@@ -427,7 +427,7 @@
           <text
             class="buffer-resource"
             x={node.x + (i - (buf.length - 1) / 2) * 32}
-            y={node.y + NODE_RADIUS + (def.isMerchant && node.settings.sellItem ? 46 : 30)}
+            y={node.y + NODE_RADIUS + 30}
           >
             {RESOURCE_ICONS[res]}{count > 1 ? count : ''}
           </text>
