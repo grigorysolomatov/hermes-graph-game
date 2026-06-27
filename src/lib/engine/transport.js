@@ -17,7 +17,7 @@ export function runTransport(state) {
     if (srcAmt < 1) continue
 
     const dstTotal = Object.values(dst.inventory).reduce((s, v) => s + v, 0)
-    if (dstTotal >= def.inventoryCap) continue
+    if (dstTotal >= dst.inventoryCap) continue
 
     src.inventory[edge.resource] = srcAmt - 1
     if (src.inventory[edge.resource] === 0) delete src.inventory[edge.resource]

@@ -1,5 +1,5 @@
 import { runTick } from './engine/tick.js'
-import { NODE_TYPES } from './nodes/registry.js'
+import { NODE_TYPES, NODE_REGISTRY } from './nodes/registry.js'
 
 let _id = 1
 function nextId() { return String(_id++) }
@@ -54,7 +54,8 @@ export function toggleRunning() {
 }
 
 export function addNode(type, x, y) {
-  state.nodes.push({ id: nextId(), type, x, y, inventory: {} })
+  const def = NODE_REGISTRY[type]
+  state.nodes.push({ id: nextId(), type, x, y, inventory: {}, inventoryCap: def?.inventoryCap ?? 10 })
 }
 
 export function removeNode(id) {

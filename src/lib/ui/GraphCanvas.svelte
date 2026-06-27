@@ -13,8 +13,8 @@
   let isPanning = false
   let panLast = { x: 0, y: 0 }
   let edgePickerMenu = $state(null)      // { edge, x, y } in client coords
-  let connectPos = $state({ x: 0, y: 0 }) // pointer position in world coords (connect preview)
-  let connectStarted = $state(false)     // true once pointer moves after entering connect mode
+  let liveAnims = $state([])
+  let _animId = 0
   let dragState = null                   // { nodeId, startWX, startWY, nodeStartX, nodeStartY }
   let isDragging = false
 
@@ -62,7 +62,6 @@
     gs.mode = 'select'
     gs.connectSourceId = null
     edgePickerMenu = null
-    connectStarted = false
   }
 
   function onPointerDown(e) {
@@ -78,7 +77,6 @@
       gs.mode = 'select'
       gs.connectSourceId = null
       gs.selectedId = null
-      connectStarted = false
       return
     }
 
@@ -109,11 +107,6 @@
   }
 
   function onPointerMove(e) {
-    if (gs.mode === 'connect') {
-      connectPos = toWorld(e.clientX, e.clientY)
-      connectStarted = true
-      return
-    }
     if (dragState) {
       const w = toWorld(e.clientX, e.clientY)
       const dx = w.x - dragState.startWX
@@ -163,9 +156,6 @@
     gs.mode = 'connect'
     gs.connectSourceId = nodeId
     gs.selectedId = null
-    const src = nodeMap[nodeId]
-    if (src) connectPos = { x: src.x, y: src.y }
-    connectStarted = false
   }
 
   function handleDelete(nodeId, e) {
@@ -187,9 +177,50 @@
     gs.selectedEdgeId = null
   }
 
+  $effect(() => {
+    const anims = gs.animations
+    if (!anims.length) return
+    for (const anim of anims) {
+      liveAnims.push({
+        id: _animId++,
+        x: anim.fromX,
+        y: anim.fromY,
+        resource: anim.resource,
+        progress: 0,
+        fromX: anim.fromX,
+        fromY: anim.fromY,
+        toX: anim.toX,
+        toY: anim.toY,
+      })
+    }
+  })
+
   onMount(() => {
     svgEl.addEventListener('wheel', onWheel, { passive: false })
-    return () => svgEl.removeEventListener('wheel', onWheel)
+
+    let lastTime = null
+    let rafHandle = null
+    function frame(ts) {
+      rafHandle = requestAnimationFrame(frame)
+      if (lastTime === null) { lastTime = ts; return }
+      const dt = ts - lastTime
+      lastTime = ts
+      for (let i = liveAnims.length - 1; i >= 0; i--) {
+        const a = liveAnims[i]
+        a.progress = Math.min(1, a.progress + dt / 800)
+        const p = a.progress
+        const eased = p * p * (3 - 2 * p)
+        a.x = a.fromX + (a.toX - a.fromX) * eased
+        a.y = a.fromY + (a.toY - a.fromY) * eased
+        if (a.progress >= 1) liveAnims.splice(i, 1)
+      }
+    }
+    rafHandle = requestAnimationFrame(frame)
+
+    return () => {
+      svgEl.removeEventListener('wheel', onWheel)
+      cancelAnimationFrame(rafHandle)
+    }
   })
 
   function invEntries(inv) {
@@ -245,17 +276,6 @@
       {/if}
     {/each}
 
-    <!-- Connect mode preview line -->
-    {#if gs.mode === 'connect' && gs.connectSourceId && nodeMap[gs.connectSourceId] && connectStarted}
-      {@const src = nodeMap[gs.connectSourceId]}
-      <line
-        x1={src.x} y1={src.y}
-        x2={connectPos.x} y2={connectPos.y}
-        class="edge-preview"
-        pointer-events="none"
-      />
-    {/if}
-
     <!-- Nodes -->
     {#each gs.nodes as node (node.id)}
       {@const def = NODE_REGISTRY[node.type]}
@@ -274,34 +294,24 @@
       <text x={node.x} y={node.y + NODE_R + 14} class="node-label" text-anchor="middle">
         {def?.label}
       </text>
-      <!-- Inventory: up to 5 icons below label -->
-      {#each inv.slice(0, 5) as [rid, count], k}
+      <!-- Inventory: each resource type with count -->
+      {#each inv as [rid, count], k}
         {@const res = RESOURCE_REGISTRY[rid]}
-        {@const shown = Math.min(inv.length, 5)}
         <text
-          x={node.x + (k - (shown - 1) / 2) * 22}
+          x={node.x + (k - (inv.length - 1) / 2) * 26}
           y={node.y + NODE_R + 30}
           class="inv-icon"
           text-anchor="middle"
-        >{res?.icon}{count > 1 ? `×${count}` : ''}</text>
+        >{res?.icon}×{count}</text>
       {/each}
     {/each}
 
-    <!-- Transport animations -->
-    {#each gs.animations as anim, i (`${gs.tick}_${i}`)}
+    <!-- Transport animations (JS-driven tweens) -->
+    {#each liveAnims as anim (anim.id)}
       {@const res = RESOURCE_REGISTRY[anim.resource]}
       <g pointer-events="none">
-        <animateTransform
-          attributeName="transform"
-          type="translate"
-          from="{anim.fromX},{anim.fromY}"
-          to="{anim.toX},{anim.toY}"
-          dur="0.85s"
-          fill="freeze"
-          calcMode="linear"
-        />
-        <circle r="13" fill="rgba(10,10,10,0.85)" />
-        <text text-anchor="middle" dominant-baseline="middle" font-size="14">{res?.icon}</text>
+        <circle r="13" fill="rgba(10,10,10,0.85)" cx={anim.x} cy={anim.y} />
+        <text x={anim.x} y={anim.y} text-anchor="middle" dominant-baseline="middle" font-size="14">{res?.icon}</text>
       </g>
     {/each}
 
@@ -390,12 +400,6 @@
   }
   .edge-line.edge-sel { stroke: #7c3aed; stroke-width: 2.5; }
   .edge-hit { stroke: transparent; stroke-width: 22; cursor: pointer; }
-  .edge-preview {
-    stroke: #7c3aed;
-    stroke-width: 2;
-    stroke-dasharray: 6 4;
-    opacity: 0.7;
-  }
   .edge-res {
     font-size: 15px;
     text-anchor: middle;
