@@ -20,7 +20,7 @@ class GameState {
   cam = $state({ x: 0, y: 0, scale: 1 })
   animFrame = $state(0)
 
-  marketPrices = { wood: Math.ceil(Math.random() * 3), chair: Math.ceil(Math.random() * 3) }
+  marketPrices = { food: Math.ceil(Math.random() * 3), wood: Math.ceil(Math.random() * 3), chair: Math.ceil(Math.random() * 3) }
 
   mkNode(type, x, y) {
     return {

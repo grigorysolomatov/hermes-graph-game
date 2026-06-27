@@ -6,6 +6,7 @@
   import EdgeContextMenu from './lib/EdgeContextMenu.svelte'
   import CustomizePanel from './lib/CustomizePanel.svelte'
   import EdgeResourcePicker from './lib/EdgeResourcePicker.svelte'
+  import TimeControlPanel from './lib/TimeControlPanel.svelte'
 
   // Non-reactive interaction state
   let panState = null
@@ -19,8 +20,8 @@
   const customizeNode = $derived(gs.nodes.find(n => n.id === gs.customizeId))
   const pickerEdge = $derived(gs.edges.find(e => e.id === gs.edgePickerId))
 
-  // Initial lumberjack
-  gs.nodes = [gs.mkNode('lumberjack', 50, 50)]
+  // Initial farmer
+  gs.nodes = [gs.mkNode('farmer', 50, 50)]
 
   // Centre initial node once viewport is known
   $effect(() => {
@@ -455,9 +456,9 @@
     />
   {/if}
 
-  <!-- Toolbar -->
+  <!-- Toolbar: horizontally scrollable node strip -->
   <div class="toolbar">
-    <div class="toolbar-left">
+    <div class="tool-strip">
       {#each NODE_TYPES as type}
         <button
           class="tool-btn"
@@ -469,12 +470,10 @@
         </button>
       {/each}
     </div>
-    <div class="toolbar-right">
-      <button class="time-btn {gs.speed === 0 ? 'active' : ''}" onpointerdown={() => gs.speed = 0}>⏸</button>
-      <button class="time-btn {gs.speed === 1 ? 'active' : ''}" onpointerdown={() => gs.speed = 1}>▶</button>
-      <button class="time-btn {gs.speed === 3 ? 'active' : ''}" onpointerdown={() => gs.speed = 3}>⏩</button>
-    </div>
   </div>
+
+  <!-- Time controls: collapsible right-side panel -->
+  <TimeControlPanel />
 </div>
 
 <style>
@@ -603,20 +602,25 @@
   }
 
   .toolbar {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 8px 12px;
+    padding: 8px 0;
     padding-bottom: max(8px, env(safe-area-inset-bottom));
     background: #111;
     border-top: 1px solid #222;
     flex-shrink: 0;
     min-height: 64px;
-    gap: 8px;
+    overflow: hidden;
   }
 
-  .toolbar-left { display: flex; gap: 8px; }
-  .toolbar-right { display: flex; gap: 8px; }
+  .tool-strip {
+    display: flex;
+    gap: 8px;
+    overflow-x: auto;
+    padding: 0 12px;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+
+  .tool-strip::-webkit-scrollbar { display: none; }
 
   .tool-btn {
     display: flex;
@@ -625,6 +629,7 @@
     justify-content: center;
     min-width: 52px;
     min-height: 52px;
+    flex-shrink: 0;
     background: #1a1a1a;
     border: 2px solid #333;
     border-radius: 10px;
@@ -639,26 +644,6 @@
 
   .tool-icon { font-size: 20px; line-height: 1; }
   .tool-label { font-size: 9px; color: #aaa; font-family: ui-monospace, monospace; }
-
-  .time-btn {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    min-width: 48px;
-    min-height: 48px;
-    background: #1a1a1a;
-    border: 2px solid #333;
-    border-radius: 10px;
-    color: #e8e8e8;
-    font-size: 18px;
-    cursor: pointer;
-    transition: border-color 0.15s;
-  }
-
-  .time-btn.active {
-    border-color: #7c3aed;
-    background: #1e1330;
-  }
 
   .ghost-node {
     position: fixed;

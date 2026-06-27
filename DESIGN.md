@@ -25,6 +25,7 @@ No goals, no failure state — just a playground to experiment with flows.
 
 | Resource | Icon | Color     |
 |----------|------|-----------|
+| Food     | 🥕   | #f97316   |
 | Wood     | 🪵   | #92400e   |
 | Chair    | 🪑   | #d97706   |
 | Coin     | 🪙   | #fbbf24   |
@@ -33,8 +34,14 @@ No goals, no failure state — just a playground to experiment with flows.
 
 ## Node Types
 
+### Farmer
+- **Produces:** 1 food per tick (adds directly to its buffer)
+- No recipe, no settings
+
 ### Lumberjack
-- **Produces:** 1 wood per tick (adds directly to its buffer)
+- **Recipe:** 1 food → 1 wood
+- Each tick: if buffer has ≥ 1 food, spend 1 food, produce 1 wood (into own buffer)
+- Otherwise: idle (food must be routed in via an edge from a Farmer)
 
 ### Carpenter
 - **Recipe:** 2 wood → 1 chair
@@ -111,10 +118,13 @@ Each edge displays a small emoji at its midpoint:
 
 ## Time Controls
 
-Bottom toolbar, right section:
-- ⏸ Pause
-- ▶ Play
-- ⏩ Fast (3×)
+Floating collapsible panel on the **right side** of the screen:
+- Position: fixed, right edge, vertically centred
+- Contains: ⏸ Pause / ▶ Play / ⏩ Fast (3×) as a vertical stack of buttons
+- A ◀/▶ chevron tab on the panel's left edge toggles collapse
+- When collapsed: only the tab is visible; panel slides off-screen to the right
+- Style: `rgba(10,10,10,0.88)` background, `backdrop-filter: blur(8px)`, #222 border
+- Touch targets ≥ 52px
 
 Graph is **fully editable at any time** — paused or running.
 
@@ -126,8 +136,9 @@ No keyboard shortcuts. No right-click. No hover-only affordances.
 All touch targets ≥ 48px.
 
 ### Toolbar (bottom of screen)
-- **Left section:** node type buttons — Lumberjack | Carpenter | Merchant | Chest
-- **Right section:** time controls — ⏸ | ▶ | ⏩
+- **Horizontally scrollable node strip** — Farmer | Lumberjack | Carpenter | Merchant | Chest (and any future node types)
+- Scroll by swiping left/right; no visible scrollbar
+- Time controls are in the separate right-side collapsible panel (see Time Controls above)
 
 ### Modes
 
@@ -156,7 +167,7 @@ The tapped edge highlights in violet while the menu is open.
 
 ### Edge Resource Picker (HTML overlay)
 - Dark modal overlay (same style as Merchant settings)
-- Options: None (inactive) / 🪵 Wood / 🪑 Chair / 🪙 Coin
+- Options: None (inactive) / 🥕 Food / 🪵 Wood / 🪑 Chair / 🪙 Coin
 - Selecting an option sets `edge.resource` and closes the picker
 
 ### Merchant Customize Panel (HTML overlay)
@@ -170,6 +181,7 @@ The tapped edge highlights in violet while the menu is open.
 - **Background:** #0a0a0a (full screen)
 - **Graph layer:** SVG, full screen
 - **Node circles:** radius 28px, filled by type:
+  - Farmer: #65a30d (green)
   - Lumberjack: #84cc16 (lime)
   - Carpenter: #a78bfa (purple)
   - Merchant: #f59e0b (amber)
@@ -186,8 +198,9 @@ The tapped edge highlights in violet while the menu is open.
 
 ## Starting State
 
-One **Lumberjack** placed near the centre of the canvas.
-Its wood production accumulates in its buffer until edges are drawn.
+One **Farmer** placed near the centre of the canvas.
+Its food production accumulates in its buffer until edges are drawn to a Lumberjack.
+(Lumberjack now requires food input, so starting with a Farmer ensures the player has something immediately useful.)
 
 ---
 
@@ -205,6 +218,7 @@ src/
     EdgeContextMenu.svelte    — SVG action buttons for selected edge
     CustomizePanel.svelte     — HTML overlay: merchant sell-item picker
     EdgeResourcePicker.svelte — HTML overlay: edge resource picker
+    TimeControlPanel.svelte   — fixed right-side collapsible time controls panel
 ```
 
 ---
