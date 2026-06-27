@@ -14,6 +14,7 @@ class GameState {
   edgePickerId = $state(null)
   connectSourceId = $state(null)
   speed = $state(1)
+  inFlight = $state({})
   dragState = $state(null)
   isDragging = $state(false)
   toolDrag = $state(null)
@@ -42,8 +43,10 @@ class GameState {
       startTime: performance.now(),
     }
     this.animations = [...this.animations, anim]
+    this.inFlight = { ...this.inFlight, [toId]: (this.inFlight[toId] || 0) + 1 }
     setTimeout(() => {
       this.animations = this.animations.filter(a => a.id !== anim.id)
+      this.inFlight = { ...this.inFlight, [toId]: Math.max(0, (this.inFlight[toId] || 0) - 1) }
       const idx = this.nodes.findIndex(n => n.id === toId)
       if (idx !== -1) {
         const dest = this.nodes[idx]
@@ -62,7 +65,7 @@ class GameState {
   }
 
   tick() {
-    const { newNodes, anims } = runTick(this.nodes, this.edges, this.marketPrices)
+    const { newNodes, anims } = runTick(this.nodes, this.edges, this.marketPrices, this.inFlight)
     this.nodes = newNodes
     for (const a of anims) {
       this.launchAnim(a.fromX, a.fromY, a.resource, a.toId, a.toX, a.toY)

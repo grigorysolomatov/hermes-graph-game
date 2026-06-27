@@ -10,7 +10,7 @@ function tryAdd(node, def, res, count) {
   node.buffer[res] = (node.buffer[res] || 0) + Math.min(count, available)
 }
 
-export function runTick(nodes, edges, marketPrices) {
+export function runTick(nodes, edges, marketPrices, inFlight = {}) {
   const newNodes = nodes.map(n => ({ ...n, buffer: { ...n.buffer } }))
   const anims = []
 
@@ -58,7 +58,7 @@ export function runTick(nodes, edges, marketPrices) {
     if (!fromNode || !toNode) continue
     if ((fromNode.buffer[edge.resource] || 0) >= 1) {
       const toDef = NODE_REGISTRY[toNode.type]
-      if (!toDef || bufferTotal(toNode.buffer) >= toDef.bufferCap) continue
+      if (!toDef || bufferTotal(toNode.buffer) + (inFlight[toNode.id] || 0) >= toDef.bufferCap) continue
       fromNode.buffer[edge.resource] -= 1
       if (fromNode.buffer[edge.resource] === 0) delete fromNode.buffer[edge.resource]
       anims.push({
