@@ -1,5 +1,5 @@
 import { gs } from './state.svelte.js'
-import { NODE_RADIUS } from './registry.js'
+import { NODE_RADIUS } from './nodes.js'
 import { svgCoords, screenPt, getTouchDist, getTouchMid, computeEdgeGeometry, SCALE_MIN, SCALE_MAX } from './camera.js'
 
 export const EDGE_OFFSET = 10

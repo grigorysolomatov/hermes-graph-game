@@ -1,6 +1,7 @@
 <script>
   import { gs } from './state.svelte.js'
-  import { NODE_REGISTRY, NODE_RADIUS, ANIM_DURATION, RESOURCE_ICONS } from './registry.js'
+  import { NODE_REGISTRY, NODE_RADIUS, ANIM_DURATION } from './nodes.js'
+  import { RESOURCE_ICONS } from './resources.js'
   import { computeEdgeGeometry, arrowHead } from './camera.js'
   import {
     computeReverseEdgeIds, EDGE_OFFSET,

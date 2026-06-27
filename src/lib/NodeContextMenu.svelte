@@ -1,5 +1,5 @@
 <script>
-  import { NODE_REGISTRY, NODE_RADIUS } from './registry.js'
+  import { NODE_REGISTRY, NODE_RADIUS } from './nodes.js'
 
   let { node, onConnect, onCustomize, onDelete } = $props()
 

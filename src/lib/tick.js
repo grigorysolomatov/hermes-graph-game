@@ -1,4 +1,4 @@
-import { NODE_REGISTRY } from './registry.js'
+import { NODE_REGISTRY } from './nodes.js'
 
 function bufferTotal(buffer) {
   return Object.values(buffer).reduce((s, v) => s + v, 0)

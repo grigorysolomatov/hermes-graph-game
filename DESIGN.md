@@ -28,6 +28,7 @@ No goals, no failure state — just a playground to experiment with flows.
 - Wood  🪵  #92400e
 - Chair 🪑  #d97706
 - Coin  🪙  #fbbf24
+- Stone 🪨  #78716c
 
 ---
 
@@ -63,13 +64,19 @@ No goals, no failure state — just a playground to experiment with flows.
 - Has a large buffer cap (100) — intended as a long-term accumulator
 - Has no outgoing transport (edges from a chest can be drawn but will never fire unless the chest has resources in its buffer)
 
+### Miner ⛏️ (#a8a29e)
+- Recipe: 1 food → 1 stone
+- Each tick: if buffer has ≥ 1 food, consumes 1 food and produces 1 stone into its own buffer
+- If no food in buffer: idle that tick
+- Requires food to be routed in via an edge
+
 ---
 
 ## Buffer Caps
 
 Every node has a maximum total buffer size (`bufferCap`). When full, incoming resources are silently dropped.
 
-- Farmer, Lumberjack, Carpenter, Merchant: **10**
+- Farmer, Lumberjack, Carpenter, Merchant, Miner: **10**
 - Chest: **100**
 
 The cap counts total items across all resource types combined.
@@ -84,7 +91,7 @@ The cap counts total items across all resource types combined.
 
 ### Edge data
 ```
-{ id, from, to, resource: null | 'food' | 'wood' | 'chair' | 'coin' }
+{ id, from, to, resource: null | 'food' | 'wood' | 'chair' | 'coin' | 'stone' }
 ```
 
 ### Transport logic (per tick, after node production/conversion)
@@ -149,7 +156,7 @@ No keyboard shortcuts. No right-click. No hover-only affordances.
 All touch targets ≥ 48px.
 
 ### Bottom toolbar
-- Horizontally scrollable strip of node type buttons: Farmer | Lumberjack | Carpenter | Merchant | Chest
+- Horizontally scrollable strip of node type buttons: Farmer | Lumberjack | Carpenter | Merchant | Chest | Miner
 - Swipe left/right to scroll; no visible scrollbar
 - **Drag to place:** drag a node button from the toolbar onto the canvas to place it
 
@@ -175,7 +182,7 @@ All touch targets ≥ 48px.
 - Tapped edge highlights in violet while menu is open
 
 ### Edge resource picker (HTML overlay)
-- Options: None (inactive) / 🥕 Food / 🪵 Wood / 🪑 Chair / 🪙 Coin
+- Options: None (inactive) / 🥕 Food / 🪵 Wood / 🪑 Chair / 🪙 Coin / 🪨 Stone
 
 ### Merchant customize panel (HTML overlay)
 - Options: None (inactive) / 🥕 Food / 🪵 Wood / 🪑 Chair
@@ -214,7 +221,8 @@ src/
   app.css                     — empty (all game styles live in component <style> blocks)
   main.js                     — Svelte mount entry point
   lib/
-    registry.js               — NODE_REGISTRY, RESOURCES, RESOURCE_ICONS, constants (NODE_RADIUS, TICK_BASE, …)
+    nodes.js                  — NODE_REGISTRY, NODE_TYPES, constants (NODE_RADIUS, TICK_BASE, ANIM_DURATION, SCALE_MIN, SCALE_MAX)
+    resources.js              — RESOURCES, RESOURCE_ICONS, RESOURCE_COLORS
     state.svelte.js           — GameState class with $state runes; exported singleton `gs`
     tick.js                   — pure runTick(): production, conversion, merchant sell, edge transport
     camera.js                 — svgCoords, screenPt, getTouchDist/Mid, arrowHead, computeEdgeGeometry

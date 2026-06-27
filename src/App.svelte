@@ -1,6 +1,7 @@
 <script>
   import { gs } from './lib/state.svelte.js'
-  import { NODE_REGISTRY, NODE_TYPES, RESOURCE_ICONS, TICK_BASE } from './lib/registry.js'
+  import { NODE_REGISTRY, NODE_TYPES, TICK_BASE } from './lib/nodes.js'
+  import { RESOURCE_ICONS } from './lib/resources.js'
   import { startToolDrag, setMerchantSellItem, setEdgeResource } from './lib/interactions.js'
   import GraphCanvas from './lib/GraphCanvas.svelte'
   import CustomizePanel from './lib/CustomizePanel.svelte'

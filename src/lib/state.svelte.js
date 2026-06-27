@@ -1,4 +1,4 @@
-import { NODE_REGISTRY, ANIM_DURATION } from './registry.js'
+import { NODE_REGISTRY, ANIM_DURATION } from './nodes.js'
 import { runTick } from './tick.js'
 
 class GameState {

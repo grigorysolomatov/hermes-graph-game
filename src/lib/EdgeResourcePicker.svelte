@@ -1,5 +1,5 @@
 <script>
-  import { RESOURCES, RESOURCE_ICONS } from './registry.js'
+  import { RESOURCES, RESOURCE_ICONS } from './resources.js'
 
   let { edge, onClose, onSetResource } = $props()
 </script>

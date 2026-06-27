@@ -1,4 +1,4 @@
-import { SCALE_MIN, SCALE_MAX } from './registry.js'
+import { SCALE_MIN, SCALE_MAX } from './nodes.js'
 
 export { SCALE_MIN, SCALE_MAX }
 
