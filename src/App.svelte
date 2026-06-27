@@ -8,28 +8,16 @@
   // Anim: { id, resource, x1, y1, x2, y2, startTime }
   // mode: 'select' | 'connect'
 
-  const NODE_TYPES = ['lumberjack', 'carpenter', 'merchant', 'chest']
+  const NODE_REGISTRY = {
+    lumberjack: { label: 'Lumberjack', emoji: '🪓', color: '#84cc16', produces: { wood: 1 }, recipe: null, isMerchant: false, isSink: false, defaultSettings: {} },
+    carpenter:  { label: 'Carpenter',  emoji: '🔨', color: '#a78bfa', produces: null, recipe: { inputs: { wood: 2 }, outputs: { chair: 1 } }, isMerchant: false, isSink: false, defaultSettings: {} },
+    merchant:   { label: 'Merchant',   emoji: '🏪', color: '#f59e0b', produces: null, recipe: null, isMerchant: true,  isSink: false, defaultSettings: {} },
+    chest:      { label: 'Chest',      emoji: '📦', color: '#6b7280', produces: null, recipe: null, isMerchant: false, isSink: true,  defaultSettings: {} },
+  }
+  const NODE_TYPES = Object.keys(NODE_REGISTRY)
   const RESOURCES = ['wood', 'chair', 'coin']
   const RESOURCE_ICONS = { wood: '🪵', chair: '🪑', coin: '🪙' }
   const RESOURCE_COLORS = { wood: '#92400e', chair: '#d97706', coin: '#fbbf24' }
-  const NODE_COLORS = {
-    lumberjack: '#84cc16',
-    carpenter: '#a78bfa',
-    merchant: '#f59e0b',
-    chest: '#6b7280',
-  }
-  const NODE_LABELS = {
-    lumberjack: 'Lumberjack',
-    carpenter: 'Carpenter',
-    merchant: 'Merchant',
-    chest: 'Chest',
-  }
-  const NODE_EMOJIS = {
-    lumberjack: '🪓',
-    carpenter: '🔨',
-    merchant: '🏪',
-    chest: '📦',
-  }
   const NODE_RADIUS = 28
   const ANIM_DURATION = 400
   const TICK_BASE = 500
@@ -62,7 +50,7 @@
 
   // Ensure prices are distinct-ish — just keep as-is, spec says 1–3 each
   function mkNode(type, x, y) {
-    return { id: nextId++, type, x, y, buffer: {} }
+    return { id: nextId++, type, x, y, buffer: {}, settings: { ...NODE_REGISTRY[type].defaultSettings } }
   }
 
   // Starting state: one lumberjack near centre
@@ -83,18 +71,30 @@
     // We'll mutate newNodes in place, then assign
 
     for (const node of newNodes) {
-      if (node.type === 'lumberjack') {
-        // Produce 1 wood, send along random outgoing edge
-        sendResourceFrom(node, 'wood', newNodes)
-      } else if (node.type === 'carpenter') {
-        const woodCount = node.buffer['wood'] || 0
-        if (woodCount >= 2) {
-          node.buffer['wood'] = woodCount - 2
-          if (node.buffer['wood'] === 0) delete node.buffer['wood']
-          sendResourceFrom(node, 'chair', newNodes)
+      const def = NODE_REGISTRY[node.type]
+      if (!def) continue
+
+      if (def.produces) {
+        for (const [res, count] of Object.entries(def.produces)) {
+          sendResourceFrom(node, res, newNodes, count)
         }
-      } else if (node.type === 'merchant') {
-        // Find a non-coin resource in buffer
+      }
+
+      if (def.recipe) {
+        const { inputs, outputs } = def.recipe
+        const canProcess = Object.entries(inputs).every(([res, need]) => (node.buffer[res] || 0) >= need)
+        if (canProcess) {
+          for (const [res, need] of Object.entries(inputs)) {
+            node.buffer[res] -= need
+            if (node.buffer[res] === 0) delete node.buffer[res]
+          }
+          for (const [res, count] of Object.entries(outputs)) {
+            sendResourceFrom(node, res, newNodes, count)
+          }
+        }
+      }
+
+      if (def.isMerchant) {
         const sellable = Object.keys(node.buffer).filter(r => r !== 'coin' && node.buffer[r] > 0)
         if (sellable.length > 0) {
           const res = pickRandom(sellable)
@@ -103,7 +103,6 @@
           const coins = marketPrices[res] || 1
           sendResourceFrom(node, 'coin', newNodes, coins)
         }
-        // Coins in buffer: if outgoing edges, send them
         const coinCount = node.buffer['coin'] || 0
         if (coinCount > 0) {
           const outs = getOutEdges(node.id)
@@ -118,7 +117,8 @@
           }
         }
       }
-      // chest: does nothing, just accumulates
+
+      // isSink: accumulates whatever arrives, no action needed
     }
 
     nodes = newNodes
@@ -588,17 +588,17 @@
         class="node"
         cx={node.x} cy={node.y}
         r={NODE_RADIUS}
-        fill={NODE_COLORS[node.type]}
+        fill={NODE_REGISTRY[node.type].color}
       />
 
       <!-- Node emoji icon -->
       <text class="node-emoji" x={node.x} y={node.y + 9}>
-        {NODE_EMOJIS[node.type]}
+        {NODE_REGISTRY[node.type].emoji}
       </text>
 
       <!-- Node label -->
       <text class="node-label" x={node.x} y={node.y + NODE_RADIUS + 14}>
-        {NODE_LABELS[node.type]}
+        {NODE_REGISTRY[node.type].label}
       </text>
 
       <!-- Buffer display -->
@@ -650,9 +650,9 @@
   {#if toolDrag}
     <div
       class="ghost-node"
-      style="left: {toolDrag.clientX - 25}px; top: {toolDrag.clientY - 25}px; --color: {NODE_COLORS[toolDrag.type]}"
+      style="left: {toolDrag.clientX - 25}px; top: {toolDrag.clientY - 25}px; --color: {NODE_REGISTRY[toolDrag.type].color}"
     >
-      <span class="ghost-emoji">{NODE_EMOJIS[toolDrag.type]}</span>
+      <span class="ghost-emoji">{NODE_REGISTRY[toolDrag.type].emoji}</span>
     </div>
   {/if}
 
@@ -662,11 +662,11 @@
       {#each NODE_TYPES as type}
         <button
           class="tool-btn"
-          style="--accent: {NODE_COLORS[type]}"
+          style="--accent: {NODE_REGISTRY[type].color}"
           onpointerdown={e => startToolDrag(type, e)}
         >
-          <span class="tool-icon">{NODE_EMOJIS[type]}</span>
-          <span class="tool-label">{NODE_LABELS[type].slice(0, 4)}</span>
+          <span class="tool-icon">{NODE_REGISTRY[type].emoji}</span>
+          <span class="tool-label">{NODE_REGISTRY[type].label.slice(0, 4)}</span>
         </button>
       {/each}
     </div>
