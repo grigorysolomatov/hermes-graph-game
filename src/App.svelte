@@ -414,26 +414,28 @@
     evt.stopPropagation()
     evt.currentTarget.setPointerCapture(evt.pointerId)
     toolDrag = { type, clientX: evt.clientX, clientY: evt.clientY }
+    window.addEventListener('pointermove', moveToolDrag)
+    window.addEventListener('pointerup', endToolDrag)
+    window.addEventListener('pointercancel', cancelToolDrag)
   }
 
   function moveToolDrag(evt) {
     if (!toolDrag) return
+    evt.preventDefault()
     toolDrag = { ...toolDrag, clientX: evt.clientX, clientY: evt.clientY }
   }
 
   function endToolDrag(evt) {
+    window.removeEventListener('pointermove', moveToolDrag)
+    window.removeEventListener('pointerup', endToolDrag)
+    window.removeEventListener('pointercancel', cancelToolDrag)
     if (!toolDrag) return
     const { type } = toolDrag
     const clientX = evt.clientX
     const clientY = evt.clientY
     toolDrag = null
 
-    // Cancel if released over toolbar
-    const toolbar = document.querySelector('.toolbar')
-    const toolbarTop = toolbar.getBoundingClientRect().top
-    if (clientY >= toolbarTop) return
-
-    // Cancel if outside the SVG canvas
+    // Place node only if released over the SVG canvas
     const svgEl = document.querySelector('#graph-svg')
     const svgR = svgEl.getBoundingClientRect()
     if (clientX < svgR.left || clientX > svgR.right || clientY < svgR.top || clientY > svgR.bottom) return
@@ -444,6 +446,9 @@
   }
 
   function cancelToolDrag() {
+    window.removeEventListener('pointermove', moveToolDrag)
+    window.removeEventListener('pointerup', endToolDrag)
+    window.removeEventListener('pointercancel', cancelToolDrag)
     toolDrag = null
   }
 
@@ -645,7 +650,7 @@
   {#if toolDrag}
     <div
       class="ghost-node"
-      style="left: {toolDrag.clientX}px; top: {toolDrag.clientY}px; --color: {NODE_COLORS[toolDrag.type]}"
+      style="left: {toolDrag.clientX - 25}px; top: {toolDrag.clientY - 25}px; --color: {NODE_COLORS[toolDrag.type]}"
     >
       <span class="ghost-emoji">{NODE_EMOJIS[toolDrag.type]}</span>
     </div>
@@ -659,9 +664,6 @@
           class="tool-btn"
           style="--accent: {NODE_COLORS[type]}"
           onpointerdown={e => startToolDrag(type, e)}
-          onpointermove={moveToolDrag}
-          onpointerup={endToolDrag}
-          onpointercancel={cancelToolDrag}
         >
           <span class="tool-icon">{NODE_EMOJIS[type]}</span>
           <span class="tool-label">{NODE_LABELS[type].slice(0, 4)}</span>
@@ -843,6 +845,7 @@
     transition: border-color 0.15s;
     gap: 2px;
     padding: 4px 6px;
+    touch-action: none;
   }
 
   .tool-icon {
@@ -884,7 +887,6 @@
     background: var(--color);
     opacity: 0.6;
     pointer-events: none;
-    transform: translate(-50%, -50%);
     display: flex;
     align-items: center;
     justify-content: center;
