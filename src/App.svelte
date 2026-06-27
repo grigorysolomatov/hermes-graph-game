@@ -1,12 +1,14 @@
 <script>
   import { gs } from './lib/state.svelte.js'
   import { NODE_REGISTRY, NODE_TYPES, RESOURCE_ICONS, NODE_RADIUS, ANIM_DURATION, TICK_BASE } from './lib/registry.js'
-  import { svgCoords, screenPt, getTouchDist, getTouchMid, edgeLine, arrowHead, SCALE_MIN, SCALE_MAX } from './lib/camera.js'
+  import { svgCoords, screenPt, getTouchDist, getTouchMid, arrowHead, computeEdgeGeometry, SCALE_MIN, SCALE_MAX } from './lib/camera.js'
   import NodeContextMenu from './lib/NodeContextMenu.svelte'
   import EdgeContextMenu from './lib/EdgeContextMenu.svelte'
   import CustomizePanel from './lib/CustomizePanel.svelte'
   import EdgeResourcePicker from './lib/EdgeResourcePicker.svelte'
   import TimeControlPanel from './lib/TimeControlPanel.svelte'
+
+  const EDGE_OFFSET = 10
 
   // Non-reactive interaction state
   let panState = null
@@ -19,6 +21,24 @@
   const selectedNode = $derived(gs.nodes.find(n => n.id === gs.selectedId))
   const customizeNode = $derived(gs.nodes.find(n => n.id === gs.customizeId))
   const pickerEdge = $derived(gs.edges.find(e => e.id === gs.edgePickerId))
+
+  // Set of edge IDs that have a reverse counterpart (A→B and B→A both exist).
+  // These edges are rendered offset to the left so both remain tappable.
+  const reverseEdgeIds = $derived.by(() => {
+    const seen = new Set()
+    const result = new Set()
+    for (const e of gs.edges) {
+      const revKey = `${e.to}:${e.from}`
+      if (seen.has(revKey)) {
+        result.add(e.id)
+        const rev = gs.edges.find(r => r.from === e.to && r.to === e.from)
+        if (rev) result.add(rev.id)
+      } else {
+        seen.add(`${e.from}:${e.to}`)
+      }
+    }
+    return result
+  })
 
   // Initial farmer
   gs.nodes = [gs.mkNode('farmer', 50, 50)]
@@ -63,9 +83,16 @@
       const dx = to.x - from.x, dy = to.y - from.y
       const len2 = dx * dx + dy * dy
       if (len2 === 0) continue
-      const t = Math.max(0, Math.min(1, ((x - from.x) * dx + (y - from.y) * dy) / len2))
-      const px = from.x + t * dx - x
-      const py = from.y + t * dy - y
+      const len = Math.sqrt(len2)
+      const offset = reverseEdgeIds.has(e.id) ? EDGE_OFFSET : 0
+      const perpX = -(dy / len) * offset
+      const perpY = (dx / len) * offset
+      const fx = from.x + perpX, fy = from.y + perpY
+      const tx = to.x + perpX, ty = to.y + perpY
+      const edx = tx - fx, edy = ty - fy
+      const t = Math.max(0, Math.min(1, ((x - fx) * edx + (y - fy) * edy) / len2))
+      const px = fx + t * edx - x
+      const py = fy + t * edy - y
       if (px * px + py * py < 15 * 15) return e
     }
     return null
@@ -99,7 +126,15 @@
         const edge = getEdgeAt(x, y)
         if (edge) {
           gs.selectedEdgeId = edge.id
-          gs.edgeTapPos = { x, y }
+          const efrom = gs.nodes.find(n => n.id === edge.from)
+          const eto = gs.nodes.find(n => n.id === edge.to)
+          if (efrom && eto) {
+            const eoffset = reverseEdgeIds.has(edge.id) ? EDGE_OFFSET : 0
+            const geo = computeEdgeGeometry(efrom, eto, NODE_RADIUS, eoffset)
+            gs.edgeTapPos = geo ? { x: geo.mx, y: geo.my } : { x, y }
+          } else {
+            gs.edgeTapPos = { x, y }
+          }
           gs.selectedId = null
         } else {
           gs.selectedId = null
@@ -334,25 +369,28 @@
         {@const from = gs.nodes.find(n => n.id === edge.from)}
         {@const to = gs.nodes.find(n => n.id === edge.to)}
         {#if from && to}
-          {@const line = edgeLine(from, to, NODE_RADIUS)}
+          {@const offset = reverseEdgeIds.has(edge.id) ? EDGE_OFFSET : 0}
+          {@const geo = computeEdgeGeometry(from, to, NODE_RADIUS, offset)}
           {@const isEdgeSel = edge.id === gs.selectedEdgeId}
-          <line
-            class="edge"
-            x1={line.x1} y1={line.y1}
-            x2={line.x2} y2={line.y2}
-            stroke={isEdgeSel ? '#7c3aed' : '#555'}
-          />
-          <path
-            class="arrowhead"
-            d={arrowHead(from.x, from.y, to.x, to.y, NODE_RADIUS)}
-            fill={isEdgeSel ? '#7c3aed' : '#555'}
-          />
-          <!-- Edge resource icon at midpoint -->
-          {#if edge.resource}
-            <text class="edge-resource-icon"
-              x={(from.x + to.x) / 2}
-              y={(from.y + to.y) / 2}
-            >{RESOURCE_ICONS[edge.resource]}</text>
+          {#if geo}
+            <line
+              class="edge"
+              x1={geo.x1} y1={geo.y1}
+              x2={geo.x2} y2={geo.y2}
+              stroke={isEdgeSel ? '#7c3aed' : '#555'}
+            />
+            <path
+              class="arrowhead"
+              d={arrowHead(geo.vfx, geo.vfy, geo.vtx, geo.vty, NODE_RADIUS)}
+              fill={isEdgeSel ? '#7c3aed' : '#555'}
+            />
+            <!-- Edge resource icon at offset midpoint -->
+            {#if edge.resource}
+              <text class="edge-resource-icon"
+                x={geo.mx}
+                y={geo.my}
+              >{RESOURCE_ICONS[edge.resource]}</text>
+            {/if}
           {/if}
         {/if}
       {/each}

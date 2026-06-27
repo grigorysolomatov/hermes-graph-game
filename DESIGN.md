@@ -245,3 +245,4 @@ src/
 - SVG for the graph (nodes, edges, animations)
 - Game state in a `GameState` class exported as `gs` from `state.svelte.js`
 - Edge hit-testing uses 15px radius threshold for wide touch targets
+- **Parallel edge offset:** if two edges connect the same pair of nodes in opposite directions (A→B and B→A), both are offset 10px to the left (counter-clockwise relative to direction of travel), placing them 20px apart on opposite sides of the centre line. A lone edge (only one direction) renders centred with no offset. The offset applies to the visible stroke, arrowhead, resource icon, hit area, and context-menu spawn point.
