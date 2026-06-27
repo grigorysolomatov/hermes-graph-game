@@ -44,9 +44,9 @@ No goals, no failure state — just a playground to experiment with flows.
 - Otherwise: idle (food must be routed in via an edge from a Farmer)
 
 ### Carpenter
-- **Recipe:** 2 wood → 1 chair
-- Buffers incoming wood each tick
-- Each tick: if buffer has ≥ 2 wood, spend 2 wood, produce 1 chair (into own buffer)
+- **Recipe:** 1 wood + 1 food → 1 chair
+- Buffers incoming wood and food each tick
+- Each tick: if buffer has ≥ 1 wood AND ≥ 1 food, spend both, produce 1 chair (into own buffer)
 - Otherwise: idle
 
 ### Merchant
@@ -106,6 +106,20 @@ Each edge displays a small emoji at its midpoint:
 - Grouped by type: shown as `[icon] [count]` e.g. 🪵 3
 - On Merchant nodes with a `sellItem` set, the sell item icon is shown between the label and buffer display
 
+## Buffer Caps
+
+Every node type has a `bufferCap` — the maximum total number of items (sum of all resource counts) it can hold:
+
+| Node type  | bufferCap |
+|------------|-----------|
+| Farmer     | 10        |
+| Lumberjack | 10        |
+| Carpenter  | 10        |
+| Merchant   | 10        |
+| Chest      | 100       |
+
+**Rule:** before any resource is added to a node's buffer (via production, recipe output, merchant sale, or edge transport), check: `sum(buffer values) < bufferCap`. If at or above cap, the incoming resource is silently dropped. For edge transport, the resource is removed from the sender but not delivered to the full receiver.
+
 ---
 
 ## Market / Price Table
@@ -153,10 +167,12 @@ All touch targets ≥ 48px.
 - Auto-returns to select mode
 
 ### Node Context Menu (SVG inline buttons near node)
-Appears above the selected node. Three buttons (48px tap targets):
+Appears above the selected node. Two or three buttons (48px tap targets):
 1. **🔗** — enter Connect mode to draw a new edge
-2. **⚙️** — open Merchant customize panel (dimmed/disabled on non-merchant nodes)
+2. **⚙️** — open Merchant customize panel (**only shown** when the node type has configurable settings, i.e. `Object.keys(defaultSettings).length > 0`; hidden entirely for Farmer, Lumberjack, Carpenter, Chest)
 3. **🗑️** — delete the node and all its edges
+
+When only 2 buttons are shown (no Customize), they are centred ±26px from the node centre.
 
 ### Edge Context Menu (SVG inline buttons near tap point)
 Appears when tapping an edge in select mode. Two buttons (48px tap targets):
