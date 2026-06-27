@@ -21,7 +21,9 @@ export function runTransport(state) {
 
     src.inventory[edge.resource] = srcAmt - 1
     if (src.inventory[edge.resource] === 0) delete src.inventory[edge.resource]
+    src.inventory = { ...src.inventory }
     dst.inventory[edge.resource] = (dst.inventory[edge.resource] || 0) + 1
+    dst.inventory = { ...dst.inventory }
 
     animations.push({
       edgeId: edge.id,

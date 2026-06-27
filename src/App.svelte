@@ -69,7 +69,7 @@
         class:active={gs.speed === 1}
         onpointerdown={(e) => { e.preventDefault(); gs.speed = 1 }}
         aria-label="Normal speed"
-      >▶</button>
+      >▶️</button>
       <button
         class="speed-btn"
         class:active={gs.speed === 3}
