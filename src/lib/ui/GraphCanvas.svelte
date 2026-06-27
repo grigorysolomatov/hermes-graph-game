@@ -14,6 +14,9 @@
   let panLast = { x: 0, y: 0 }
   let edgePickerMenu = $state(null)      // { edge, x, y } in client coords
   let connectPos = $state({ x: 0, y: 0 }) // pointer position in world coords (connect preview)
+  let connectStarted = $state(false)     // true once pointer moves after entering connect mode
+  let dragState = null                   // { nodeId, startWX, startWY, nodeStartX, nodeStartY }
+  let isDragging = false
 
   const nodeMap = $derived(Object.fromEntries(gs.nodes.map(n => [n.id, n])))
   const selectedNode = $derived(gs.selectedId ? nodeMap[gs.selectedId] : null)
@@ -59,6 +62,7 @@
     gs.mode = 'select'
     gs.connectSourceId = null
     edgePickerMenu = null
+    connectStarted = false
   }
 
   function onPointerDown(e) {
@@ -74,6 +78,7 @@
       gs.mode = 'select'
       gs.connectSourceId = null
       gs.selectedId = null
+      connectStarted = false
       return
     }
 
@@ -82,6 +87,9 @@
       gs.selectedId = n.id
       gs.selectedEdgeId = null
       edgePickerMenu = null
+      dragState = { nodeId: n.id, startWX: w.x, startWY: w.y, nodeStartX: n.x, nodeStartY: n.y }
+      isDragging = false
+      svgEl?.setPointerCapture(e.pointerId)
       return
     }
 
@@ -103,6 +111,23 @@
   function onPointerMove(e) {
     if (gs.mode === 'connect') {
       connectPos = toWorld(e.clientX, e.clientY)
+      connectStarted = true
+      return
+    }
+    if (dragState) {
+      const w = toWorld(e.clientX, e.clientY)
+      const dx = w.x - dragState.startWX
+      const dy = w.y - dragState.startWY
+      if (!isDragging && Math.hypot(dx, dy) * gs.cam.scale > 4) {
+        isDragging = true
+      }
+      if (isDragging) {
+        const node = gs.nodes.find(n => n.id === dragState.nodeId)
+        if (node) {
+          node.x = dragState.nodeStartX + dx
+          node.y = dragState.nodeStartY + dy
+        }
+      }
       return
     }
     if (!isPanning) return
@@ -113,6 +138,12 @@
   }
 
   function onPointerUp(e) {
+    if (dragState) {
+      dragState = null
+      isDragging = false
+      svgEl?.releasePointerCapture(e.pointerId)
+      return
+    }
     if (isPanning) {
       isPanning = false
       svgEl?.releasePointerCapture(e.pointerId)
@@ -134,6 +165,7 @@
     gs.selectedId = null
     const src = nodeMap[nodeId]
     if (src) connectPos = { x: src.x, y: src.y }
+    connectStarted = false
   }
 
   function handleDelete(nodeId, e) {
@@ -177,8 +209,8 @@
   onpointerup={onPointerUp}
 >
   <defs>
-    <marker id="arr" markerWidth="7" markerHeight="7" refX="5" refY="3" orient="auto">
-      <path d="M0,0 L0,6 L7,3 z" fill="#3a3a3a" />
+    <marker id="arr" markerWidth="7" markerHeight="7" refX="7" refY="3" orient="auto">
+      <path d="M0,0 L0,6 L7,3 z" fill="#666" />
     </marker>
   </defs>
 
@@ -189,16 +221,23 @@
       {@const src = nodeMap[edge.from]}
       {@const dst = nodeMap[edge.to]}
       {#if src && dst}
+        {@const _len = Math.sqrt((dst.x-src.x)**2 + (dst.y-src.y)**2)}
+        {@const ux = _len > 0 ? (dst.x-src.x)/_len : 0}
+        {@const uy = _len > 0 ? (dst.y-src.y)/_len : 0}
+        {@const x1 = src.x + ux * NODE_R}
+        {@const y1 = src.y + uy * NODE_R}
+        {@const x2 = dst.x - ux * NODE_R}
+        {@const y2 = dst.y - uy * NODE_R}
         {@const mx = (src.x + dst.x) / 2}
         {@const my = (src.y + dst.y) / 2}
         <line
-          x1={src.x} y1={src.y} x2={dst.x} y2={dst.y}
+          x1={x1} y1={y1} x2={x2} y2={y2}
           class="edge-line"
           class:edge-sel={gs.selectedEdgeId === edge.id}
           marker-end="url(#arr)"
         />
         <!-- Wide transparent hit area -->
-        <line x1={src.x} y1={src.y} x2={dst.x} y2={dst.y} class="edge-hit" />
+        <line x1={x1} y1={y1} x2={x2} y2={y2} class="edge-hit" />
         {#if edge.resource}
           {@const res = RESOURCE_REGISTRY[edge.resource]}
           <text x={mx} y={my} dy={-12} class="edge-res">{res?.icon}</text>
@@ -207,7 +246,7 @@
     {/each}
 
     <!-- Connect mode preview line -->
-    {#if gs.mode === 'connect' && gs.connectSourceId && nodeMap[gs.connectSourceId]}
+    {#if gs.mode === 'connect' && gs.connectSourceId && nodeMap[gs.connectSourceId] && connectStarted}
       {@const src = nodeMap[gs.connectSourceId]}
       <line
         x1={src.x} y1={src.y}
