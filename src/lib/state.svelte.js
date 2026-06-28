@@ -57,7 +57,8 @@ function tick() {
   // speed=1: fire every 3rd frame at 333ms base ≈ 1/sec
   // speed=3: fire every frame ≈ 3/sec
   if (state.speed === 1 && _frame % 3 !== 0) return
-  const anims = runTick(state)
+  const { newNodes, anims } = runTick(state)
+  state.nodes = newNodes
   for (const a of anims) {
     launchAnim(a.fromX, a.fromY, a.resource, a.toX, a.toY)
   }

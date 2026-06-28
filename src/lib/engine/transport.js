@@ -1,10 +1,10 @@
 import { NODE_REGISTRY } from '../nodes/registry.js'
 
-export function runTransport(state) {
+export function runTransport(nodes, edges) {
   const animations = []
-  const nodeMap = Object.fromEntries(state.nodes.map(n => [n.id, n]))
+  const nodeMap = Object.fromEntries(nodes.map(n => [n.id, n]))
 
-  for (const edge of state.edges) {
+  for (const edge of edges) {
     if (!edge.resource) continue
     const src = nodeMap[edge.from]
     const dst = nodeMap[edge.to]
@@ -21,9 +21,7 @@ export function runTransport(state) {
 
     src.inventory[edge.resource] = srcAmt - 1
     if (src.inventory[edge.resource] === 0) delete src.inventory[edge.resource]
-    src.inventory = { ...src.inventory }
     dst.inventory[edge.resource] = (dst.inventory[edge.resource] || 0) + 1
-    dst.inventory = { ...dst.inventory }
 
     animations.push({
       edgeId: edge.id,
