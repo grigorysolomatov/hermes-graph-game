@@ -393,7 +393,7 @@
 
   .node-icon { font-size: 20px; pointer-events: none; }
   .node-label { font-size: 11px; fill: #555; pointer-events: none; }
-  .inv-icon { font-size: 12px; pointer-events: none; }
+  .inv-icon { font-size: 12px; fill: #e8e8e8; pointer-events: none; }
 
   .ctx-btn { cursor: pointer; }
 
