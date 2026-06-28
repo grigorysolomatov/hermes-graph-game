@@ -268,7 +268,7 @@
           y={node.y + NODE_R + 44}
           class="inv-icon"
           text-anchor="middle"
-        >{res?.icon}×{count}</text>
+        >{res?.icon}{count}</text>
       {/each}
     {/each}
 
